@@ -1,0 +1,16 @@
+# comfy-env-root.toml
+# Declare other ComfyUI custom nodes your package depends on at runtime.
+# comfy-env will install these alongside your node automatically.
+#
+# [node_reqs]
+# "DisplayName" = "github_user/RepoName"
+#
+# Example:
+# [node_reqs]
+# "ComfyUI-VideoHelperSuite" = "Kosinkadink/ComfyUI-VideoHelperSuite"
+
+[node_reqs]
+
+# Declare system-level packages to install via brew (macOS/Linux).
+# [brew]
+# packages = ["ffmpeg"]

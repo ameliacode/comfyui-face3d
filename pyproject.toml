@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-my-nodes"
+version = "0.1.0"
+description = "My custom nodes for ComfyUI."
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+
+[project.urls]
+Repository = "https://github.com/YOUR_USERNAME/ComfyUI-MyNodes"
+
+[tool.comfy]
+PublisherId = "your_publisher_id"
+DisplayName = "My Nodes"
+Icon = ""

@@ -1,0 +1,65 @@
+# ComfyUI My Nodes
+
+[![GitHub Stars](https://img.shields.io/github/stars/YOUR_USERNAME/ComfyUI-MyNodes?style=flat)](https://github.com/YOUR_USERNAME/ComfyUI-MyNodes/stargazers)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+
+Short one-line description of what your nodes do.
+
+## Nodes
+
+| Node | Description |
+|---|---|
+| **Load My Model** | Downloads and prepares the model configuration for inference. |
+| **Example Image Node** | Processes an input image using the loaded model configuration. |
+| **Save My Image** | Saves output images to the ComfyUI output folder. |
+
+## Installation
+
+### ComfyUI Manager
+
+1. Open **ComfyUI Manager**
+2. Search for `My Nodes`
+3. Click **Install**
+4. Restart ComfyUI
+
+### Manual
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/YOUR_USERNAME/ComfyUI-MyNodes
+```
+
+Restart ComfyUI after installation. Dependencies install automatically on first run.
+
+## Usage
+
+1. Add **Load My Model** to your graph.
+2. Choose `precision` and whether to enable `compile`.
+3. Connect the `model_config` output to **Example Image Node**.
+4. Feed an image into **Example Image Node**.
+5. Adjust `strength`:
+   `0.0` keeps the input unchanged, `1.0` is the default example behavior, and values above `1.0` amplify the effect.
+6. Optionally connect **Save My Image** to write the result to disk.
+
+The example node currently scales the input tensor and optionally composites with a mask.
+
+## Requirements
+
+- ComfyUI (recent version with V3 API support)
+- Python 3.10+
+- Any extra dependencies listed in [`requirements.txt`](requirements.txt)
+- Optional GPU requirements specific to your real model
+
+## Publishing
+
+The included GitHub Actions workflow publishes on `v*` tags. Before using it, set `COMFY_API_KEY` in repository secrets and verify that your package metadata is final.
+
+## Support
+
+- Open a [GitHub Discussion](https://github.com/YOUR_USERNAME/ComfyUI-MyNodes/discussions) for questions
+- File bugs via [GitHub Issues](https://github.com/YOUR_USERNAME/ComfyUI-MyNodes/issues)
+
+## Credits
+
+- [Model Name](https://arxiv.org/abs/XXXX.XXXXX) - Paper title (Conference Year)
