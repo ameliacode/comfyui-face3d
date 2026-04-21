@@ -1,31 +1,62 @@
-# ComfyUI Custom Node Template
+# ComfyUI KaoLRM Mesh Framework
 
-Template repository for building ComfyUI custom node packages with the V3 API.
+Single-image FLAME mesh reconstruction for ComfyUI, centered on a KaoLRM pipeline.
 
-Use [README.md.example](README.md.example) as the starting point for the real project README.
+## Status
 
-## Included
+The repo now has the overall framework for the intended pipeline:
 
-- V3 `ComfyExtension` entrypoint in [`__init__.py`](__init__.py)
-- example nodes in [`nodes/`](nodes)
-- install hooks with optional `comfy_env` support in [`install.py`](install.py) and [`prestartup_script.py`](prestartup_script.py)
-- package metadata in [`pyproject.toml`](pyproject.toml)
-- project README and maintainer templates in [`README.md.example`](README.md.example) and [`CLAUDE.md.example`](CLAUDE.md.example)
-- GitHub workflows in [`.github/workflows/`](.github/workflows)
+- `Load KaoLRM`
+- `KaoLRM Preprocess`
+- `KaoLRM Reconstruct`
+- `Mesh Preview`
 
-## Usage
+The older FLAME editor/viewer nodes are not the active product path right now, but shared helpers in `nodes/flame_core.py` and `nodes/flame_render_util.py` are still used by the KaoLRM scaffold.
 
-1. Copy this template into a new repository.
-2. Replace placeholders in `pyproject.toml`, the node files, and workflow metadata.
-3. Rename or copy `README.md.example` to your project `README.md`.
-4. Rename or copy `CLAUDE.md.example` to your project `CLAUDE.md` if you want maintainer guidance.
-5. Replace the example node logic with your actual model or processing code.
+## Non-Commercial Notice
 
-## License
+KaoLRM checkpoints and the required FLAME assets are non-commercial. Keep that constraint in mind before distributing outputs or integrating this package into a commercial workflow.
 
-MIT. See [LICENSE](LICENSE).
+## Planned Pipeline
 
-## Acknowledgements
+```text
+IMAGE -> KaoLRM Preprocess -> KaoLRM Reconstruct -> MESH -> Mesh Preview
+             optional               requires KaoLRM
+```
 
-- [PozzettiAndrea](https://github.com/PozzettiAndrea)'s ComfyUI tooling and workflow conventions were used as references for parts of this template, especially around `comfy_env`, `comfy-test`, and maintainer guidance structure.
-- [jtydhr88/comfyui-custom-node-skills](https://github.com/jtydhr88/comfyui-custom-node-skills) was also used as a reference.
+`KaoLRM Preprocess` currently handles the 224x224 safety-net resize. The background-removal branch is scaffolded but not wired yet, so the safe default is `remove_background=False`. `KaoLRM Reconstruct` lazily resolves the upstream KaoLRM runtime from `third_party/kaolrm`, an installed `kaolrm` package, or `KAOLRM_ROOT`. The default output is the 5023-vertex FLAME mesh; higher `num_sampling` values emit a sampled point cloud plus the original FLAME topology as metadata.
+
+## Model Paths
+
+Expected runtime paths inside ComfyUI:
+
+- `ComfyUI/models/kaolrm/mono.safetensors`
+- `ComfyUI/models/kaolrm/multiview.safetensors`
+- `ComfyUI/models/flame/generic_model.pkl`
+
+If any of those files are missing, the loader fails with a direct path-specific error.
+
+## Dependencies
+
+Runtime requirements now track the KaoLRM framework direction:
+
+- `safetensors`
+- `einops`
+- `rembg`
+- `chumpy`
+
+`pytorch3d` remains optional. `Mesh Preview` defaults to the shipped `soft_torch` backend.
+
+## Current Scope
+
+- Mesh-only workflow
+- No texture generation
+- No Gaussian-splat rendering
+- No automatic download for gated FLAME assets
+- No vendored KaoLRM source yet, though an installed `kaolrm` package or `KAOLRM_ROOT` also works
+
+## Development
+
+- Active framework nodes live under [`nodes/`](nodes)
+- Mesh rendering helper is still reused from [`nodes/flame_render_util.py`](nodes/flame_render_util.py)
+- The detailed approved plan lives in [`.claude/CLAUDE.md`](.claude/CLAUDE.md)

@@ -1,0 +1,13 @@
+FLAME assets are not bundled with this repository.
+
+This repository expects the user to supply a properly licensed FLAME model file.
+
+Official FLAME project:
+https://flame.is.tue.mpg.de/
+
+You must review and comply with the applicable FLAME license terms for the
+specific model files you use. The FLAME 2023 Open release is distributed under
+CC-BY-4.0; other FLAME releases may have different terms.
+
+This file is included as a reminder that FLAME model licensing is separate from
+this repository's MIT license.

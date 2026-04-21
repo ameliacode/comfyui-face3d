@@ -1,9 +1,11 @@
-from .example_node import ExampleImageNode
-from .load_model import LoadMyModel
-from .output_node import SaveMyImage
+from .kaolrm_load import LoadKaoLRM
+from .kaolrm_preprocess import KaoLRMPreprocess
+from .kaolrm_reconstruct import KaoLRMReconstruct
+from .mesh_preview import MeshPreview
 
 NODE_CLASSES = [
-    LoadMyModel,
-    ExampleImageNode,
-    SaveMyImage,
+    LoadKaoLRM,
+    KaoLRMPreprocess,
+    KaoLRMReconstruct,
+    MeshPreview,
 ]

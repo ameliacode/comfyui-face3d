@@ -1,8 +1,9 @@
-# Add your dependencies here.
-# Do NOT re-list packages already bundled with ComfyUI:
-#   torch, torchvision, torchaudio, numpy, Pillow, scipy,
-#   safetensors, transformers, accelerate, huggingface_hub
+# ComfyUI bundles: torch, torchvision, torchaudio, numpy, Pillow, scipy,
+# safetensors, transformers, accelerate, huggingface_hub. Listed here are
+# extras this node suite needs on top of that baseline.
 #
-# Example:
-# opencv-python>=4.8.0
-# aiohttp>=3.9.0
+# KaoLRM source itself is not pinned here; vendor via third_party/kaolrm/
+# or set KAOLRM_ROOT env var (see nodes/kaolrm_runtime.py).
+chumpy>=0.70
+einops>=0.8.0
+rembg>=2.0.59

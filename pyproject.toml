@@ -1,14 +1,14 @@
 [project]
-name = "comfyui-my-nodes"
+name = "comfyui-flame"
 version = "0.1.0"
-description = "My custom nodes for ComfyUI."
+description = "KaoLRM-based FLAME mesh reconstruction framework for ComfyUI."
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.urls]
-Repository = "https://github.com/YOUR_USERNAME/ComfyUI-MyNodes"
+Repository = "https://github.com/wswg3/comfyui-flame"
 
 [tool.comfy]
-PublisherId = "your_publisher_id"
-DisplayName = "My Nodes"
+PublisherId = "wswg3"
+DisplayName = "KaoLRM Mesh"
 Icon = ""

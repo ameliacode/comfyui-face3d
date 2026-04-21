@@ -1,2 +1,16 @@
 __pycache__
 .codex
+
+# Model weights — local only, never in git
+/models/
+*.pkl
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+/FLAME2020/
+
+# Test / build artifacts
+.pytest_cache/
+*.egg-info/
+.venv/
