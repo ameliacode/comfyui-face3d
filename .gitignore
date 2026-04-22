@@ -14,3 +14,6 @@ __pycache__
 .pytest_cache/
 *.egg-info/
 .venv/
+
+# Vendored upstream source — local only (symlink or pinned submodule)
+/third_party/

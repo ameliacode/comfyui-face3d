@@ -20,7 +20,7 @@ class _DummyModel(torch.nn.Module):
         return {
             "shape": torch.zeros(1, 100),
             "expression": torch.zeros(1, 50),
-            "pose": torch.zeros(1, 15),
+            "pose": torch.zeros(1, 6),
             "scale": torch.ones(1, 1),
             "translation": torch.zeros(1, 3),
         }
@@ -83,3 +83,49 @@ def test_reconstruct_keeps_mesh_topology_at_flame_resolution(monkeypatch):
     assert mesh.vertices.shape == (1, 4, 3)
     assert mesh.faces.shape == (1, 2, 3)
     assert mesh.topology == "mesh"
+
+
+def test_reconstruct_emits_flame_params_second_output(monkeypatch):
+    from nodes.flame_params_wire import validate_flame_params
+    from nodes.kaolrm_reconstruct import KaoLRMReconstruct
+
+    model = _DummyModel()
+    monkeypatch.setattr("nodes.kaolrm_reconstruct.import_kaolrm_symbols", lambda: {
+        "create_intrinsics": lambda f, c, device: torch.eye(3, dtype=torch.float32, device=device),
+        "build_camera_principle": lambda extrinsics, intrinsics: torch.zeros(1, 16, dtype=torch.float32, device=extrinsics.device),
+    })
+    monkeypatch.setattr("nodes.kaolrm_reconstruct._get_cached_model", lambda payload: model)
+
+    image = torch.rand(1, 224, 224, 3)
+    out = KaoLRMReconstruct.execute(
+        {"variant": "mono", "device": "cpu", "dtype": "fp32", "ckpt_path": "x", "flame_pkl_path": "y"},
+        image,
+        num_sampling=5023,
+    )
+    flame_params = out[1]
+    validate_flame_params(flame_params, source="KaoLRMReconstruct")
+    assert flame_params["shape"].shape == (1, 100)
+    assert flame_params["expression"].shape == (1, 50)
+    assert flame_params["pose"].shape == (1, 6)
+    assert flame_params["scale"].shape == (1, 1)
+    assert flame_params["translation"].shape == (1, 3)
+    assert flame_params["fix_z_trans"] is True
+
+
+def test_reconstruct_fix_z_trans_follows_variant(monkeypatch):
+    from nodes.kaolrm_reconstruct import KaoLRMReconstruct
+
+    model = _DummyModel()
+    monkeypatch.setattr("nodes.kaolrm_reconstruct.import_kaolrm_symbols", lambda: {
+        "create_intrinsics": lambda f, c, device: torch.eye(3, dtype=torch.float32, device=device),
+        "build_camera_principle": lambda extrinsics, intrinsics: torch.zeros(1, 16, dtype=torch.float32, device=extrinsics.device),
+    })
+    monkeypatch.setattr("nodes.kaolrm_reconstruct._get_cached_model", lambda payload: model)
+
+    image = torch.rand(1, 224, 224, 3)
+    out = KaoLRMReconstruct.execute(
+        {"variant": "multiview", "device": "cpu", "dtype": "fp32", "ckpt_path": "x", "flame_pkl_path": "y"},
+        image,
+        num_sampling=5023,
+    )
+    assert out[1]["fix_z_trans"] is False

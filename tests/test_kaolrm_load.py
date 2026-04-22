@@ -56,6 +56,18 @@ def test_ensure_kaolrm_weights_returns_path_when_present(tmp_path, monkeypatch):
     assert got == weights
 
 
+def test_ensure_kaolrm_config_missing_raises_with_path(tmp_path, monkeypatch):
+    import folder_paths
+    import nodes.kaolrm_load as mod
+
+    monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path))
+    with pytest.raises(RuntimeError) as exc:
+        mod.ensure_kaolrm_config("mono")
+    msg = str(exc.value)
+    assert "mono.config.json" in msg
+    assert str(tmp_path) in msg
+
+
 def test_ensure_generic_flame_pkl_missing_raises(tmp_path, monkeypatch):
     import folder_paths
     import nodes.kaolrm_load as mod
@@ -78,15 +90,18 @@ def test_execute_does_not_require_runtime_checkout(tmp_path, monkeypatch):
 
     monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path))
     weights = tmp_path / "kaolrm" / "mono.safetensors"
+    config = tmp_path / "kaolrm" / "mono.config.json"
     flame = tmp_path / "flame" / "generic_model.pkl"
     weights.parent.mkdir(parents=True)
     flame.parent.mkdir(parents=True)
     weights.write_bytes(b"stub")
+    config.write_text("{}")
     flame.write_bytes(b"stub")
     monkeypatch.setattr(mod, "resolve_kaolrm_root", lambda required=False: None)
 
     out = mod.LoadKaoLRM.execute(variant="mono", i_understand_non_commercial=True)
     descriptor = out[0]
     assert descriptor["ckpt_path"] == str(weights)
+    assert descriptor["config_path"] == str(config)
     assert descriptor["flame_pkl_path"] == str(flame)
     assert descriptor["kaolrm_root"] is None

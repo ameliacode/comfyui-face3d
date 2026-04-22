@@ -2,9 +2,9 @@
 
 Project guidance for Claude Code working on the WYSIWYG Studio ComfyUI face reconstruction pipeline.
 
-**Current state.** A KaoLRM-based node suite that produces a FLAME-topology mesh from a single image. Mesh only — no texture, no relighting maps yet. Scaffolded in `nodes/kaolrm_*.py`, registered via the V3 `ComfyExtension` pattern in `__init__.py`.
+**Current state.** A KaoLRM-based node suite that produces a FLAME-topology mesh from a single image, plus a SMIRK expression-refinement branch that merges SMIRK's per-frame expression + jaw pose into KaoLRM's identity params and re-solves the mesh via the canonical FLAME head. A single `FLAMEParamsEdit` node folds the merge policy together with user-facing sliders (strengths + pose/translation offsets + `fix_z_trans` override) — the seed for the FLAME Param Optimizer roadmap entry. Mesh only — no texture, no relighting maps yet. Scaffolded in `nodes/kaolrm_*.py`, `nodes/smirk_*.py`, and `nodes/flame_params_*.py`; registered via the V3 `ComfyExtension` pattern in `__init__.py`.
 
-**Target state.** A 5-layer WYSIWYG Studio pipeline — KaoLRM geometry → FreeUV albedo → MoSAR intrinsic maps → DECA expression detail → pore composite → export — producing fully-textured, relightable FLAME assets. Full roadmap in [`docs/pipeline-roadmap.md`](../docs/pipeline-roadmap.md).
+**Target state.** A 5-layer WYSIWYG Studio pipeline — KaoLRM geometry → FreeUV albedo → MoSAR intrinsic maps → DECA expression detail → pore composite → export — producing fully-textured, relightable FLAME assets. Full roadmap in [`docs/pipeline-roadmap.md`](docs/pipeline-roadmap.md). Approved integration spec for the SMIRK branch lives at [`plan/final-plan.md`](plan/final-plan.md).
 
 **Rule of thumb.** Work forward from the KaoLRM mesh path. The old FLAME editor/viewer nodes are not the active product path, but `nodes/flame_core.py` and `nodes/flame_render_util.py` are still active dependencies of the KaoLRM scaffold and must not be treated as dead code.
 
@@ -16,27 +16,39 @@ For requests like "plan a spec for X" / "draft a design for Y", switch to orches
 
 ---
 
-## Current implementation — KaoLRM mesh suite
+## Current implementation — KaoLRM mesh suite + SMIRK expression branch
 
 ### Node pipeline
 
 ```
 LoadKaoLRM ─► KaoLRMPreprocess (optional) ─► KaoLRMReconstruct ─► MESH ─► MeshPreview
+                                                         │
+                                                         └─► FLAME_PARAMS ──────┐
+                                                                                ▼
+                                                                      FLAMEParamsEdit ─► FLAME_PARAMS ─► FLAMEParamsToMesh ─► MESH ─► MeshPreview
+                                                                                ▲
+LoadSMIRK ─► SMIRKPredict ─► FLAME_PARAMS ──────────────────────────────────────┘
 ```
 
-`KaoLRMPreprocess` does resize and optional `rembg` background removal (opt-in — `rembg` ships its own heavy weights). `MeshPreview` rasterizes the mesh for visual verification; it's the terminal node while there's no texture work to feed into.
+`KaoLRMPreprocess` does resize and optional `rembg` background removal (opt-in — `rembg` ships its own heavy weights). The straight-line KaoLRM path (top row) still works standalone — `KaoLRMReconstruct` emits both the mesh and a canonical `FLAME_PARAMS` dict, so a params-refinement workflow can start from KaoLRM alone or fuse in the SMIRK branch via `FLAMEParamsEdit`'s optional secondary input. `FLAMEParamsEdit` applies the fixed merge policy when the override is wired (`shape ← params`, `expression ← override`, `pose = [global ← params, jaw ← override]`, `scale/translation ← params`, `fix_z_trans ← params`), then applies the user sliders (strengths + offsets + `fix_z_trans` override) on top. `FLAMEParamsToMesh` re-solves the FLAME vertices using `nodes/flame_core.FlameCore`. `MeshPreview` rasterizes either mesh for visual verification.
 
 ### Wire types
 
-- `KAOLRM_MODEL` — `io.Custom("KAOLRM_MODEL")`, a plain dict descriptor `{variant, ckpt_path, flame_pkl_path, device, dtype, kaolrm_root}`. The heavy model is cached in `_KAOLRM_CACHE` inside `nodes/kaolrm_reconstruct.py`, keyed by `(variant, device, dtype, ckpt_path, flame_pkl_path, kaolrm_root)`.
-- `MESH` on the wire is the **built-in** `io.Mesh` (`MeshPayload` from `comfy_api.latest._util`), carrying `{vertices[B,V,3], faces[B,F,3]}` plus ad-hoc attrs `flame_params`, `gender="generic"`, `source_resolution=224`, `topology`, `num_sampling`, and the original FLAME topology in `base_vertices`/`base_faces` when a sampled point cloud is emitted. `nodes/mesh_types.py` declares an unused `io.Custom("MESH")` alongside live helpers (`coerce_mesh`, `compute_vertex_normals`) — the custom type is vestigial and can be deleted at cleanup.
+- `KAOLRM_MODEL` — `io.Custom("KAOLRM_MODEL")`, a plain dict descriptor `{variant, ckpt_path, flame_pkl_path, config_path, device, dtype, kaolrm_root}`. The heavy model is cached in `_KAOLRM_CACHE` inside `nodes/kaolrm_reconstruct.py`, keyed by `(variant, device, dtype, ckpt_path, flame_pkl_path, config_path, kaolrm_root)`.
+- `SMIRK_MODEL` — `io.Custom("SMIRK_MODEL")`, a plain dict descriptor `{ckpt_path, device, dtype, smirk_root}`. The `SmirkEncoder` is cached in `_SMIRK_CACHE` inside `nodes/smirk_predict.py`, keyed by `(device, dtype, ckpt_path, smirk_root)`.
+- `FLAME_PARAMS` — `io.Custom("FLAME_PARAMS")` declared in `nodes/flame_params_wire.py`. A plain dict with canonical batched shapes `{shape[B,100], expression[B,50], pose[B,6], scale[B,1], translation[B,3], fix_z_trans: bool}`. `pose` is laid out as `[global(3) | jaw(3)]` to match KaoLRM. `B=1` for v0.1. `validate_flame_params(params, *, source)` is the gatekeeper every node calls on entry.
+- `MESH` on the wire is the **built-in** `io.Mesh` (`MeshPayload` from `comfy_api.latest._util`), carrying `{vertices[B,V,3], faces[B,F,3]}` plus ad-hoc attrs `flame_params` (flat `[N]` tensors for debugging only — the canonical batched params travel on the second output wire), `gender="generic"`, `source_resolution=224`, `topology`, `num_sampling`, `fix_z_trans`, and the original FLAME topology in `base_vertices`/`base_faces` when a sampled point cloud is emitted. `nodes/mesh_types.py` declares an unused `io.Custom("MESH")` alongside live helpers (`coerce_mesh`, `compute_vertex_normals`) — the custom type is vestigial and can be deleted at cleanup.
 
 ### Nodes
 
 - **`LoadKaoLRM`** (`nodes/kaolrm_load.py`) — resolves `model.safetensors` + FLAME pkl and returns the descriptor. Heavy build is lazy in `KaoLRMReconstruct`, not here. Inputs: `variant` (`mono`|`multiview`, default `mono`), `device` (`auto`|`cpu`|`cuda`), `dtype` (`auto`|`fp32`|`fp16`|`bf16`; `auto` → `fp16` on CUDA, forced `fp32` on CPU), `i_understand_non_commercial` boolean gate (must be `True` — see Brutal Review #1).
 - **`KaoLRMPreprocess`** (`nodes/kaolrm_preprocess.py`) — resize to 224×224, then optional `rembg` via cached session (`_get_rembg_session`), composite against `background_color` with `composite_alpha`, resize mask in lockstep. Default `remove_background=False`. Outputs `IMAGE`, `MASK`.
-- **`KaoLRMReconstruct`** (`nodes/kaolrm_reconstruct.py`) — the mesh predictor. Inputs include `source_cam_dist` float (default `2.0`) and `num_sampling` int (default `5023`, the FLAME vertex count). Background removal / rembg model choice live on `KaoLRMPreprocess`, not here. Output: built-in `MESH` with attrs, all tensors on CPU. When `num_sampling != 5023`, the output switches to a sampled point cloud and preserves the original FLAME topology in `base_vertices`/`base_faces`.
+- **`KaoLRMReconstruct`** (`nodes/kaolrm_reconstruct.py`) — the mesh predictor. Inputs include `source_cam_dist` float (default `2.0`) and `num_sampling` int (default `5023`, the FLAME vertex count). Background removal / rembg model choice live on `KaoLRMPreprocess`, not here. Outputs: built-in `MESH` with attrs **and** `FLAME_PARAMS` (canonical batched `[1, N]` tensors + `fix_z_trans`). All tensors on CPU. When `num_sampling != 5023`, the mesh output switches to a sampled point cloud and preserves the original FLAME topology in `base_vertices`/`base_faces`; the `FLAME_PARAMS` output is unaffected.
 - **`MeshPreview`** (`nodes/mesh_preview.py`) — rasterizes `MESH` to IMAGE+MASK. Default renderer `soft_torch`; `pytorch3d` opt-in when installed. Uses `render_mesh()` for triangle meshes and `render_points()` for sampled point clouds. Depends on `nodes/flame_render_util.py`, which is active shared code.
+- **`LoadSMIRK`** (`nodes/smirk_load.py`) — resolves `SMIRK_em1.pt` and returns the `SMIRK_MODEL` descriptor. Inputs: `device` (`auto`|`cpu`|`cuda`), `dtype` (`auto`|`fp32`|`fp16`|`bf16`), `i_understand_non_commercial` gate (SMIRK code is MIT but FLAME topology is not). Heavy encoder build is lazy in `SMIRKPredict`.
+- **`SMIRKPredict`** (`nodes/smirk_predict.py`) — runs `SmirkEncoder` on a 224×224 face crop and emits `FLAME_PARAMS`. SMIRK returns `{shape[1,300], expression[1,50], pose[1,3], jaw[1,3], eyelid[1,2], cam[1,3]}`; we build `pose = [zeros(1,3) | jaw]` and zero-fill `shape/scale/translation` (the merge policy inside `FLAMEParamsEdit` discards them). Enforces batch size 1. Cache: `_SMIRK_CACHE` keyed by `(device, dtype, ckpt_path, smirk_root)`.
+- **`FLAMEParamsEdit`** (`nodes/flame_params_edit.py`) — one-stop node for merging + user refinement. Takes one required `params` (normally KaoLRM) and one optional `params_override` (normally SMIRK). When `params_override` is wired, the fixed merge policy applies first (`shape ← params`, `expression ← override`, `pose = [global ← params, jaw ← override]`, `scale/translation/fix_z_trans ← params`). Then the slider stage applies: `shape_strength`, `expression_strength`, `jaw_strength` (multiplicative, 0.0–1.5), `scale_multiplier` (0.1–3.0), `global_pose_offset_{x,y,z}` + `translation_offset_{x,y,z}` (additive, −1.0 to 1.0), and `fix_z_trans_override` combo (`inherit`/`force_true`/`force_false`). Seed for the FLAME Param Optimizer roadmap entry — landmark-fit / photometric losses land later inside this same node. Validates via `validate_flame_params`; rejects batch mismatch, missing `fix_z_trans`, and flat tensors with an error naming the canonical `[B, 100]`-style shape.
+- **`FLAMEParamsToMesh`** (`nodes/flame_params_to_mesh.py`) — re-solves a FLAME mesh from edited params using `nodes.flame_core.get_flame_core` (not the KaoLRM-vendored `flame.py` — cleaner layering, and the cache is shared with other future params-driven nodes). Pose `[6]` is expanded to `[15]` via `_expand_pose_6_to_15` (neck + both eyes zero-filled). Scale and translation are applied outside `FlameCore.forward` so `fix_z_trans=True` zeros translation z *before* the per-vertex offset is applied.
 
 ### Inference flow inside `KaoLRMReconstruct.execute()`
 
@@ -62,9 +74,18 @@ LoadKaoLRM ─► KaoLRMPreprocess (optional) ─► KaoLRMReconstruct ─► ME
 
 ### Active (KaoLRM path)
 
-- `nodes/kaolrm_load.py`, `nodes/kaolrm_preprocess.py`, `nodes/kaolrm_reconstruct.py`, `nodes/kaolrm_runtime.py`, `nodes/kaolrm_mesh_model.py` — node suite + runtime (KaoLRM runtime resolution, optional path injection, `import_kaolrm_symbols`, mesh-only `KaoLRMMesh` wrapper, `load_mesh_only_model`).
+- `nodes/kaolrm_load.py`, `nodes/kaolrm_preprocess.py`, `nodes/kaolrm_reconstruct.py`, `nodes/kaolrm_runtime.py`, `nodes/kaolrm_mesh_model.py` — node suite + runtime (KaoLRM runtime resolution, optional path injection, `import_kaolrm_symbols`, mesh-only `KaoLRMMesh` wrapper, `load_mesh_only_model(..., config_path=...)`).
 - `nodes/mesh_types.py` — `coerce_mesh`, `compute_vertex_normals` helpers.
 - `nodes/mesh_preview.py` — `MeshPreview` node.
+
+### Active (SMIRK branch)
+
+- `nodes/smirk_runtime.py` — mirrors `kaolrm_runtime.py`: `SMIRK_ENV_VAR = "SMIRK_ROOT"`, `third_party/smirk/` discovery, `import_smirk_encoder()` loads `src/smirk_encoder.py` in isolation via `importlib.util.spec_from_file_location`.
+- `nodes/smirk_load.py` — `LoadSMIRK`, `SMIRK_MODEL` wire, `ensure_smirk_weights()`.
+- `nodes/smirk_predict.py` — `SMIRKPredict`, `_SMIRK_CACHE`, `_load_smirk_encoder()` (monkey-patched by tests).
+- `nodes/flame_params_wire.py` — `FLAME_PARAMS` custom type + `validate_flame_params()` + canonical shape map.
+- `nodes/flame_params_edit.py` — `FLAMEParamsEdit` node + `_apply_merge_policy()` + `_apply_edits()` helpers + `FIX_Z_OPTIONS` constant.
+- `nodes/flame_params_to_mesh.py` — `FLAMEParamsToMesh` node, `_expand_pose_6_to_15()` helper, `N_VERTICES` constant (monkey-patched by tests).
 
 ### Active shared helpers
 
@@ -105,11 +126,14 @@ LoadKaoLRM ─► KaoLRMPreprocess (optional) ─► KaoLRMReconstruct ─► ME
 
 - `ComfyUI/models/kaolrm/mono.safetensors`
 - `ComfyUI/models/kaolrm/multiview.safetensors`
+- `ComfyUI/models/kaolrm/mono.config.json`
+- `ComfyUI/models/kaolrm/multiview.config.json`
 - `ComfyUI/models/flame/generic_model.pkl`
+- `ComfyUI/models/smirk/SMIRK_em1.pt`
 
 ### Required framework deps (`requirements.txt`)
 
-`huggingface_hub`, `safetensors`, `einops`, `rembg`, `chumpy`. Keep `pytorch3d`, `xformers`, `diff-surfel-rasterization` **out** of required deps — they're only needed for the Gaussian splat video path we don't use.
+`huggingface_hub`, `safetensors`, `einops`, `rembg`, `chumpy`, `timm>=0.9.16` (for SMIRK's `MobileNetV3`-based encoder). Keep `pytorch3d`, `xformers`, `diff-surfel-rasterization` **out** of required deps — they're only needed for the Gaussian splat video path we don't use.
 
 ### Dependency integration strategy for KaoLRM itself
 
@@ -121,10 +145,20 @@ Supported runtime resolution order:
 
 `LoadKaoLRM` no longer requires the runtime checkout up front; the actual import/build path is resolved lazily in `KaoLRMReconstruct`.
 
+### Dependency integration strategy for SMIRK
+
+Same three-option pattern as KaoLRM. `nodes/smirk_runtime.py` resolves the source tree in this order:
+
+- **Option A (preferred)** — vendor a pinned checkout under `third_party/smirk/` (detected by the presence of `src/smirk_encoder.py`).
+- **Option B** — install upstream `smirk` into the active Python environment.
+- **Option C** — set `SMIRK_ROOT=/abs/path/to/smirk` for local development.
+
+`SmirkEncoder` is imported in isolation via `importlib.util.spec_from_file_location`, sidestepping upstream's package-level `__init__.py`. Upstream repo: `https://github.com/georgeretsi/smirk`. Commit pin: **BLOCKER — to be resolved before merge.**
+
 ### Testing
 
-- Per-node unit tests: fixed input → expected output shape/range. Existing: `test_kaolrm_load.py`, `test_kaolrm_preprocess.py`, `test_kaolrm_reconstruct.py` (mocked model), `test_kaolrm_runtime.py`, `test_mesh_type.py`, `test_flame_core.py`, `test_flame_params.py`, `test_render.py`, `test_routes.py`.
-- Run with `~/github/ComfyUI/venv311/bin/python -m pytest tests/` — all should pass with no real weights present.
+- Per-node unit tests: fixed input → expected output shape/range. KaoLRM suite: `test_kaolrm_load.py`, `test_kaolrm_preprocess.py`, `test_kaolrm_reconstruct.py` (mocked model; asserts the FLAME_PARAMS second output + fix_z_trans variant gating), `test_kaolrm_runtime.py`, `test_mesh_type.py`. SMIRK + params suite: `test_smirk_runtime.py`, `test_smirk_load.py`, `test_smirk_predict.py` (monkey-patches `_load_smirk_encoder`), `test_flame_params_edit.py` (passthrough, merge policy, strength sliders, offsets, `fix_z_trans_override`, validation errors), `test_flame_params_to_mesh.py` (uses `synthetic_flame_pkl` fixture from `conftest.py` to build a zeroed FLAME pkl with a configurable vertex count — set via `monkeypatch.setattr("nodes.flame_params_to_mesh.N_VERTICES", N)`). Legacy FLAME helper tests: `test_flame_core.py`, `test_flame_params.py`, `test_render.py`, `test_routes.py`.
+- Run with `~/github/ComfyUI/venv311/bin/python -m pytest tests/` — all 55 should pass with no real weights present.
 - End-to-end tests require the real weights — mark `@pytest.mark.slow`, run locally before release, never required in CI.
 
 ---
@@ -151,18 +185,23 @@ Supported runtime resolution order:
 ### Landed
 
 - `LoadKaoLRM`, `KaoLRMPreprocess`, `KaoLRMReconstruct`, `MeshPreview` implemented and registered via `nodes/__init__.py` + V3 `ComfyExtension` in `__init__.py`.
-- `i_understand_non_commercial` gate on `LoadKaoLRM` (Brutal Review #1).
-- Missing-weight / missing-FLAME error messages name the exact path and upstream URL (Brutal Review #2).
+- `LoadSMIRK`, `SMIRKPredict`, `FLAMEParamsEdit`, `FLAMEParamsToMesh` scaffolded per [`plan/final-plan.md`](plan/final-plan.md) and registered. The earlier `KaoLRMParamsToFLAMEParams` shim and the stand-alone `FLAMEParamsMerge` node have been folded into `KaoLRMReconstruct`'s second output + `FLAMEParamsEdit`.
+- `FLAME_PARAMS` wire type (`nodes/flame_params_wire.py`) with canonical `[B, N]` schema + `validate_flame_params` gatekeeper.
+- `i_understand_non_commercial` gate on `LoadKaoLRM` and `LoadSMIRK` (Brutal Review #1).
+- Missing-weight / missing-FLAME / missing-SMIRK error messages name the exact path and upstream URL (Brutal Review #2).
 - `rembg` uses cached sessions via `new_session(model_name)`, opt-in by default.
-- KaoLRM import surface isolated: `nodes/kaolrm_runtime.py` + individual-module loading via `importlib.util.spec_from_file_location` in `kaolrm_mesh_model.py` — sidesteps upstream's top-level `__init__.py` (Brutal Review #3 resolved).
-- Tests landed: `tests/test_kaolrm_load.py`, `tests/test_kaolrm_preprocess.py`, `tests/test_mesh_type.py` (covers `coerce_mesh` / `compute_vertex_normals` helpers).
+- KaoLRM and SMIRK import surfaces isolated: `kaolrm_runtime.py` / `smirk_runtime.py` + `importlib.util.spec_from_file_location` — sidesteps upstream top-level `__init__.py` modules (Brutal Review #3 resolved).
+- `config_path` threaded through `KAOLRM_MODEL` descriptor + `_KAOLRM_CACHE` key + `load_mesh_only_model`, so the KaoLRM release configs can live alongside the safetensors (`models/kaolrm/{variant}.config.json`).
+- `KaoLRMReconstruct` emits `FLAME_PARAMS` directly as a second output (canonical `[1, N]` tensors + `fix_z_trans`); the stashed `mesh.flame_params` / `mesh.fix_z_trans` attrs remain for legacy inspection.
+- Tests landed: 55 green across the KaoLRM, SMIRK, and edit suites (see Testing section for inventory).
 
 ### Open
 
-- Vendor `third_party/kaolrm/` as a pinned submodule for the default portable install. The runtime can also come from an installed `kaolrm` package or `KAOLRM_ROOT`, but vendoring is still the most reproducible default.
-- Ship `assets/KAOLRM_LICENSE.txt` + `assets/EG3D_LICENSE.txt` alongside the existing `assets/FLAME_LICENSE.txt`.
-- Keep `workflows/flame_basic.json` aligned with the registered node set; it is now the KaoLRM mesh-preview example.
-- Comment block in `requirements.txt` documenting the manual KaoLRM install (submodule vs `pip install git+...@<sha>`).
+- **BLOCKERS for first SMIRK release.** Pin the upstream `smirk` commit hash; confirm the SHA256 of `SMIRK_em1.pt` and record it in `docs/model_hashes.md`.
+- Vendor `third_party/kaolrm/` and `third_party/smirk/` as pinned submodules for the default portable install. Runtime can still come from an installed package or `KAOLRM_ROOT` / `SMIRK_ROOT`, but vendoring is the most reproducible default.
+- Ship `assets/KAOLRM_LICENSE.txt`, `assets/EG3D_LICENSE.txt`, and `assets/SMIRK_MIT_LICENSE.txt` alongside the existing `assets/FLAME_LICENSE.txt`.
+- Bundle `workflows/kaolrm_smirk_mesh.json` — SMIRK-refined demo workflow — alongside the existing mesh-preview example.
+- Comment block in `requirements.txt` documenting the manual KaoLRM + SMIRK install (submodule vs `pip install git+...@<sha>`).
 - `tests/test_mesh_preview.py` — render-smoke against a synthetic 5023-vert mesh. `test_mesh_type.py` covers the helpers but not the node.
 
 ---
@@ -183,7 +222,11 @@ Kept inline because these are active risks for every PR, not resolved history.
 10. **Scope creep.** Next ask after ship will be "add MoSAR texture" — not a follow-up PR. MoSAR has no public code/weights and its own license; it's a v0.2/v0.3 integration.
 11. **fp16 underflow on expression coefficients.** See Known Gotchas. Test fp16 on a non-neutral face before claiming parity.
 12. **No real KaoLRM model in CI.** Mocks + preprocess round-trips only. First real bug surfaces at user-report time. Document in CONTRIBUTING when authored.
-13. **Plan/doc drift.** When behavior changes, update this file in the same PR or mark the old section historical. Example history: `source_cam_dist` moved from `LoadKaoLRM` to `KaoLRMReconstruct`; `remove_background`/`rembg_model` moved from `KaoLRMReconstruct` to `KaoLRMPreprocess`.
+13. **Plan/doc drift.** When behavior changes, update this file in the same PR or mark the old section historical. Example history: `source_cam_dist` moved from `LoadKaoLRM` to `KaoLRMReconstruct`; `remove_background`/`rembg_model` moved from `KaoLRMReconstruct` to `KaoLRMPreprocess`; `config_path` became a first-class descriptor field when KaoLRM release configs were moved out of `third_party/kaolrm/releases/` and into `models/kaolrm/`.
+14. **SMIRK pose convention skew.** SMIRK returns `pose[1,3]` (global) and `jaw[1,3]` as separate tensors. Our canonical `FLAME_PARAMS` pose is `[global(3) | jaw(3)]`, and `KaoLRMReconstruct` already emits that layout. `SMIRKPredict` zeros the global slot (KaoLRM owns head pose post-merge) — do not change this without updating the merge policy inside `FLAMEParamsEdit` and `_expand_pose_6_to_15` together.
+15. **FLAME head re-solve layering.** `FLAMEParamsToMesh` deliberately uses `nodes/flame_core.py:FlameCore` instead of the KaoLRM-vendored `flame.py` so the custom node suite doesn't hard-depend on the `third_party/kaolrm/` tree for the params→mesh path. Keep it that way: the KaoLRM path stays vendored, the edited path uses our own FLAME loader.
+16. **Scale/translation application order.** `FLAMEParamsToMesh` applies scale and translation *outside* `FlameCore.forward` so `fix_z_trans=True` can zero translation z reliably regardless of what the FLAME core does with `zero_trans`. `KaoLRMReconstruct` goes through `model.flame2mesh(...)` which has its own code path — the two must stay numerically equivalent on a KaoLRM-only workflow. Covered by `test_flame_params_to_mesh.py::test_fix_z_trans_true_zeros_translation_z`; re-verify when `FlameCore` changes.
+17. **Strength sliders are multiplicative, offsets are additive.** `FLAMEParamsEdit` clones `pose` before scaling jaw so the global slot stays untouched, then adds the global offsets. Translation offset applies pre-`fix_z_trans`, so `force_true` still zeros z downstream. If sliders ever gain a relative-to-neutral-face mode, spec it explicitly; don't redefine existing parameter semantics silently.
 
 ---
 
@@ -197,9 +240,11 @@ Kept inline because these are active risks for every PR, not resolved history.
 6. **CPU path.** Same smoke test on CPU with `dtype=fp32`. ~10× slower, acceptable for v0.1.
 7. **Graceful failures.** Missing weights → `RuntimeError` with exact path; KaoLRM not installed → `ImportError` with install command; non-224 image → auto-resize with log.
 8. **No regression on legacy helpers.** Registration still succeeds; existing `tests/test_flame_*` pass.
+9. **SMIRK branch smoke.** With `SMIRK_em1.pt` at `models/smirk/` and the SMIRK source resolved, `LoadSMIRK.execute(i_understand_non_commercial=True)` returns a descriptor; `SMIRKPredict` on a front portrait returns `FLAME_PARAMS` with `pose[:, :3]` all zeros and `pose[:, 3:]` non-zero (jaw). `FLAMEParamsEdit(params=kaolrm, params_override=smirk)` → `FLAMEParamsToMesh` produces `vertices.shape == (1, 5023, 3)` with identity inherited from KaoLRM and mouth shape inherited from SMIRK. Sliders: `expression_strength=0.0` collapses to neutral mouth; `jaw_strength=0.0` closes the jaw while preserving expression; `scale_multiplier=0.5` shrinks the mesh uniformly.
+10. **Pose-expansion sanity.** `_expand_pose_6_to_15` on `[0.1…0.6]` input produces `[0.1, 0.2, 0.3, 0, 0, 0, 0.4, 0.5, 0.6, 0, 0, 0, 0, 0, 0]`. Asserted in `test_flame_params_to_mesh.py`.
 
 ---
 
 ## References
 
-Primary: KaoLRM (3DV 2026), FLAME 2020 (MPI). Roadmap papers (SMIRK, FreeUV, MoSAR, DECA, FFHQ-UV, Barré-Brisebois & Hill) and roles are in [`docs/pipeline-roadmap.md`](../docs/pipeline-roadmap.md). FLAME-Universe (github.com/TimoBolkart/FLAME-Universe) is the canonical index.
+Primary: KaoLRM (3DV 2026), FLAME 2020 (MPI), SMIRK (CVPR 2024, `georgeretsi/smirk`). Roadmap papers (SMIRK, FreeUV, MoSAR, DECA, FFHQ-UV, Barré-Brisebois & Hill) and roles are in [`docs/pipeline-roadmap.md`](docs/pipeline-roadmap.md). Approved SMIRK-integration spec: [`plan/final-plan.md`](plan/final-plan.md). FLAME-Universe (github.com/TimoBolkart/FLAME-Universe) is the canonical index.

@@ -19,6 +19,10 @@ KAOLRM_FILENAMES = {
     "mono": "mono.safetensors",
     "multiview": "multiview.safetensors",
 }
+KAOLRM_CONFIG_FILENAMES = {
+    "mono": "mono.config.json",
+    "multiview": "multiview.config.json",
+}
 FLAME_FILENAME = "generic_model.pkl"
 KAOLRM_RELEASE_URL = "https://github.com/CyberAgentAILab/KaoLRM/releases"
 FLAME_URL = "https://flame.is.tue.mpg.de/"
@@ -43,6 +47,16 @@ def ensure_kaolrm_weights(variant: str) -> Path:
     if not path.exists():
         raise RuntimeError(
             f"Missing KaoLRM checkpoint '{path.name}'. Place it at '{path}'. "
+            f"Upstream release: {KAOLRM_RELEASE_URL}"
+        )
+    return path
+
+
+def ensure_kaolrm_config(variant: str) -> Path:
+    path = Path(folder_paths.models_dir) / KAOLRM_SUBDIR / KAOLRM_CONFIG_FILENAMES[variant]
+    if not path.exists():
+        raise RuntimeError(
+            f"Missing KaoLRM config '{path.name}'. Place it at '{path}'. "
             f"Upstream release: {KAOLRM_RELEASE_URL}"
         )
     return path
@@ -112,11 +126,13 @@ class LoadKaoLRM(io.ComfyNode):
         resolved_device = resolve_device(device)
         resolved_dtype = resolve_dtype(dtype, resolved_device)
         ckpt_path = ensure_kaolrm_weights(variant)
+        config_path = ensure_kaolrm_config(variant)
         flame_pkl_path = ensure_generic_flame_pkl()
         kaolrm_root = resolve_kaolrm_root(required=False)
         config = {
             "variant": variant,
             "ckpt_path": str(ckpt_path),
+            "config_path": str(config_path),
             "flame_pkl_path": str(flame_pkl_path),
             "device": resolved_device,
             "dtype": resolved_dtype,

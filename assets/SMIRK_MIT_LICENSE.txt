@@ -1,0 +1,22 @@
+SMIRK source code is not bundled with this repository.
+
+This repository integrates with the upstream SMIRK project (Retsinas et al.,
+"3D Facial Expressions through Analysis-by-Neural-Synthesis", CVPR 2024)
+either via a vendored checkout at `third_party/smirk/`, an installed package,
+or the `SMIRK_ROOT` environment variable.
+
+Upstream project:
+https://github.com/georgeretsi/smirk
+
+SMIRK source code is released under the MIT License. The pretrained weights
+(`SMIRK_em1.pt`, distributed via the upstream Google Drive release) are
+subject to the same MIT terms per the upstream README.
+
+Note however that SMIRK regresses parameters for the FLAME head model, whose
+topology and assets are licensed separately by MPI under non-commercial terms
+(see `FLAME_LICENSE.txt`). Using SMIRK to drive a FLAME mesh in this pipeline
+therefore inherits the stricter FLAME license for downstream products.
+
+This file is included as a reminder that SMIRK licensing is separate from
+this repository's MIT license, and that the overall pipeline remains
+non-commercial due to FLAME (and KaoLRM / EG3D-derived code).

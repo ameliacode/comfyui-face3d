@@ -168,11 +168,11 @@ class KaoLRMMesh(nn.Module):
         return vertices.float(), lmk3d, vertices_render
 
 
-def load_kaolrm_release_config(kaolrm_root: str, variant: str) -> dict:
-    config_path = Path(kaolrm_root) / "releases" / variant / "config.json"
-    if not config_path.exists():
-        raise RuntimeError(f"Missing KaoLRM config.json at '{config_path}'.")
-    return json.loads(config_path.read_text())
+def load_kaolrm_release_config(config_path: str) -> dict:
+    path = Path(config_path)
+    if not path.exists():
+        raise RuntimeError(f"Missing KaoLRM config.json at '{path}'.")
+    return json.loads(path.read_text())
 
 
 def load_mesh_only_model(
@@ -180,6 +180,7 @@ def load_mesh_only_model(
     kaolrm_root: str,
     variant: str,
     ckpt_path: str,
+    config_path: str,
     flame_pkl_path: str,
     device: str,
     dtype: str,
@@ -190,7 +191,7 @@ def load_mesh_only_model(
         PartialState()
     except ImportError:
         log.debug("accelerate.PartialState unavailable; skipping distributed init.")
-    config = load_kaolrm_release_config(kaolrm_root, variant)
+    config = load_kaolrm_release_config(config_path)
     model = KaoLRMMesh(config, flame_pkl_path=flame_pkl_path, kaolrm_root=kaolrm_root)
     state = load_file(str(ckpt_path))
     missing, unexpected = model.load_state_dict(state, strict=False)

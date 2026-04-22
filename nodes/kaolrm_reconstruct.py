@@ -6,11 +6,12 @@ import torch.nn.functional as F
 from comfy_api.latest import io
 from comfy_api.latest._util import MESH as MeshPayload
 
+from .flame_params_wire import FLAME_PARAMS
 from .kaolrm_load import KAOLRM_MODEL
 from .kaolrm_mesh_model import load_mesh_only_model
 from .kaolrm_runtime import import_kaolrm_symbols, resolve_kaolrm_root
 
-_KAOLRM_CACHE: dict[tuple[str, str, str, str, str, str], torch.nn.Module] = {}
+_KAOLRM_CACHE: dict[tuple[str, str, str, str, str, str, str], torch.nn.Module] = {}
 
 FLAME_VERT_COUNT = 5023
 
@@ -35,6 +36,7 @@ def _get_cached_model(kaolrm_model: dict) -> torch.nn.Module:
         kaolrm_model["device"],
         kaolrm_model["dtype"],
         kaolrm_model["ckpt_path"],
+        kaolrm_model["config_path"],
         kaolrm_model["flame_pkl_path"],
         kaolrm_root,
     )
@@ -44,6 +46,7 @@ def _get_cached_model(kaolrm_model: dict) -> torch.nn.Module:
             kaolrm_root=kaolrm_root,
             variant=kaolrm_model["variant"],
             ckpt_path=kaolrm_model["ckpt_path"],
+            config_path=kaolrm_model["config_path"],
             flame_pkl_path=kaolrm_model["flame_pkl_path"],
             device=kaolrm_model["device"],
             dtype=kaolrm_model["dtype"],
@@ -64,6 +67,20 @@ def _build_source_camera(runtime: dict[str, object], dist_to_center: float, devi
 
 def _params_to_cpu(decoded_params: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     return {k: v.detach().cpu()[0].contiguous() for k, v in decoded_params.items()}
+
+
+_FLAME_PARAM_KEYS = ("shape", "expression", "pose", "scale", "translation")
+
+
+def _build_flame_params_output(
+    decoded_params_f32: dict[str, torch.Tensor], fix_z_trans: bool
+) -> dict:
+    out = {
+        k: decoded_params_f32[k].detach().cpu().float().contiguous()
+        for k in _FLAME_PARAM_KEYS
+    }
+    out["fix_z_trans"] = bool(fix_z_trans)
+    return out
 
 
 class KaoLRMReconstruct(io.ComfyNode):
@@ -100,7 +117,16 @@ class KaoLRMReconstruct(io.ComfyNode):
                     ),
                 ),
             ],
-            outputs=[io.Mesh.Output()],
+            outputs=[
+                io.Mesh.Output(),
+                FLAME_PARAMS.Output(
+                    display_name="flame_params",
+                    tooltip=(
+                        "Canonical FLAME_PARAMS with [1, N] tensors + fix_z_trans. "
+                        "Feed directly into FLAMEParamsEdit or FLAMEParamsToMesh."
+                    ),
+                ),
+            ],
         )
 
     @classmethod
@@ -143,8 +169,10 @@ class KaoLRMReconstruct(io.ComfyNode):
         mesh.base_vertices = vertices.detach().cpu().contiguous()
         mesh.base_faces = base_faces.detach().cpu().to(torch.int64).contiguous()
         mesh.flame_params = _params_to_cpu(decoded_params_f32)
+        mesh.fix_z_trans = fix_z
         mesh.gender = "generic"
         mesh.source_resolution = 224
         mesh.topology = "point_cloud" if sampled else "mesh"
         mesh.num_sampling = int(num_sampling)
-        return io.NodeOutput(mesh)
+        flame_params_out = _build_flame_params_output(decoded_params_f32, fix_z)
+        return io.NodeOutput(mesh, flame_params_out)

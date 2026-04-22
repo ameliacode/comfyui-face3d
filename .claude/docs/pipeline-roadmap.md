@@ -1,6 +1,6 @@
 # Pipeline Roadmap — WYSIWYG Studio Face Pipeline
 
-Target state for the full production pipeline. Current code implements only Layer 0 (KaoLRM mesh); see `.claude/CLAUDE.md` for the authoritative current-state spec.
+Target state for the full production pipeline. Current code implements the KaoLRM + SMIRK geometry portion of Layer 0 — identity from KaoLRM, expression + jaw-pose refinement from SMIRK, merged **inside `FLAMEParamsEdit`** alongside user-facing sliders (strengths + pose/translation offsets + `fix_z_trans` override), then re-solved through `nodes/flame_core.FlameCore`. The slider stage of the FLAME Param Optimizer has landed; landmark-fit and photometric losses remain deferred to M1/M2. See `.claude/CLAUDE.md` for the authoritative current-state spec and `.claude/plan/final-plan.md` for the approved SMIRK-integration spec.
 
 ## Overview
 
@@ -28,10 +28,16 @@ All maps converge on **FLAME UV layout at the output boundary**. Any remap from 
 ```
 Input image
     │
-    ├─► [KaoLRM]            coarse FLAME params + mesh
+    ├─► [KaoLRM]            coarse FLAME params + mesh (two outputs: MESH + FLAME_PARAMS)
     │       │
-    │       └─► [SMIRK]     expression refinement on top of KaoLRM
-    │                       (KaoLRM = identity/shape, SMIRK = expression)
+    │       ├─► [SMIRK]     expression refinement, emitted as FLAME_PARAMS
+    │       │               (KaoLRM = identity/shape, SMIRK = expression)
+    │       │
+    │       └─► [FLAMEParamsEdit]
+    │                       user-facing node that merges SMIRK into KaoLRM
+    │                       under the fixed policy and exposes sliders (strengths,
+    │                       offsets, fix_z_trans override). Landmark-fit and
+    │                       photometric losses land here in M1/M2.
     │
     ├─► [FreeUV]            albedo UV from image, FLAME-native
     │
@@ -50,11 +56,17 @@ Input image
 
 ## Layer responsibilities
 
-### Layer 0 — Geometry (KaoLRM + SMIRK)
+### Layer 0 — Geometry (KaoLRM + SMIRK + Optimizer)
 
-- **KaoLRM** handles identity and shape. View-consistent, clean FLAME params.
-- **SMIRK** refines expression only. Do not let SMIRK override KaoLRM's shape — merge `shape ← KaoLRM`, `expression, jaw_pose ← SMIRK`.
-- Output: FLAME params dict + posed mesh.
+- **KaoLRM** handles identity and shape. View-consistent, clean FLAME params. *(Landed — `LoadKaoLRM`, `KaoLRMPreprocess`, `KaoLRMReconstruct`, which now emits both `MESH` and a canonical `FLAME_PARAMS` wire.)*
+- **SMIRK** refines expression only. Do not let SMIRK override KaoLRM's shape — the merge policy inside `FLAMEParamsEdit` enforces `shape ← KaoLRM`, `expression, jaw_pose ← SMIRK`. *(Landed — `LoadSMIRK`, `SMIRKPredict`, `FLAMEParamsEdit`, `FLAMEParamsToMesh`.)*
+- **FLAME Param Optimizer** (user-facing refinement). Scope split by milestone:
+  - **M0 (landed)** — `FLAMEParamsEdit` slider stage: `shape_strength`, `expression_strength`, `jaw_strength` (multiplicative), `scale_multiplier`, `global_pose_offset_{x,y,z}`, `translation_offset_{x,y,z}` (additive), `fix_z_trans_override` combo. Optional secondary `params_override` input triggers the KaoLRM+SMIRK merge in the same node.
+  - **M1** — Landmark-fit loss against 2D landmarks from the input image (face-alignment or MediaPipe), implemented inside `FLAMEParamsEdit`.
+  - **M2+** — Optional photometric loss once FreeUV albedo exists; gated by a checkbox to keep Layer 0 runnable standalone.
+  - **M1+** — Per-param freeze toggles so users can lock identity and only refine expression (or vice versa).
+  - Reuses the parked `nodes/flame_editor.py` / `flame_params.py` code rather than a fresh implementation when the loss branches land.
+- Output of the layer: FLAME params dict + posed mesh. `FLAMEParamsEdit` is opt-in — bypassing it is a straight pass-through from KaoLRM/SMIRK into `FLAMEParamsToMesh`.
 
 ### Layer 1 — Albedo (FreeUV)
 
@@ -127,6 +139,7 @@ wysiwyg-face-pipeline/               # target layout; current repo is `comfyui-f
 ├── custom_nodes/
 │   ├── kaolrm_node/
 │   ├── smirk_node/
+│   ├── flame_param_optimizer_node/
 │   ├── freeuv_node/
 │   ├── mosar_node/
 │   ├── deca_detail_node/
@@ -155,8 +168,9 @@ wysiwyg-face-pipeline/               # target layout; current repo is `comfyui-f
 
 ### M1 — Minimum viable
 
-- KaoLRM + SMIRK + FreeUV + Export nodes end-to-end.
+- KaoLRM + SMIRK + `FLAMEParamsEdit` (sliders + landmark-fit) + FreeUV + Export nodes end-to-end.
 - Produces FLAME mesh + FLAME-UV albedo. No detail, no relighting maps.
+- Slider stage of `FLAMEParamsEdit` is already landed; M1 adds the optional landmark-fit branch. Photometric branch deferred to M2.
 - Reference workflow JSON checked in.
 
 ### M2 — Relightable
