@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+
+def _populate_freeuv_weights(tmp_path: Path) -> dict[str, Path]:
+    root = tmp_path / "freeuv"
+    root.mkdir(parents=True)
+    sd15 = root / "sd15"
+    sd15.mkdir()
+    (sd15 / "model_index.json").write_text("{}")
+    clip = root / "image_encoder_l"
+    clip.mkdir()
+    (clip / "config.json").write_text("{}")
+    aligner = root / "uv_structure_aligner.bin"
+    aligner.write_bytes(b"stub")
+    detail = root / "flaw_tolerant_facial_detail_extractor.bin"
+    detail.write_bytes(b"stub")
+    return {"sd15": sd15, "clip": clip, "aligner": aligner, "detail": detail}
+
+
+def test_execute_requires_non_commercial_acknowledgement():
+    from nodes.freeuv_load import LoadFreeUV
+
+    with pytest.raises(RuntimeError, match="non_commercial"):
+        LoadFreeUV.execute(i_understand_non_commercial=False)
+
+
+def test_ensure_sd15_missing_triggers_hf_download(tmp_path, monkeypatch):
+    import folder_paths
+    import nodes.freeuv_load as mod
+
+    monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path))
+    called = {}
+
+    def fake_download(repo_id: str, local_dir: Path):
+        called["repo_id"] = repo_id
+        called["local_dir"] = Path(local_dir)
+        Path(local_dir).mkdir(parents=True, exist_ok=True)
+        (Path(local_dir) / "model_index.json").write_text("{}")
+
+    monkeypatch.setattr(mod, "_download_hf_snapshot", fake_download)
+    path = mod._ensure_sd15_snapshot()
+    assert called["repo_id"] == mod.SD15_HF_REPO
+    assert called["local_dir"] == tmp_path / "freeuv" / "sd15"
+    assert path == tmp_path / "freeuv" / "sd15"
+
+
+def test_ensure_sd15_raises_when_download_incomplete(tmp_path, monkeypatch):
+    import folder_paths
+    import nodes.freeuv_load as mod
+
+    monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path))
+    monkeypatch.setattr(mod, "_download_hf_snapshot", lambda repo_id, local_dir: None)
+    with pytest.raises(RuntimeError, match="model_index.json"):
+        mod._ensure_sd15_snapshot()
+
+
+def test_ensure_clip_missing_triggers_hf_download(tmp_path, monkeypatch):
+    import folder_paths
+    import nodes.freeuv_load as mod
+
+    monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path))
+    called = {}
+
+    def fake_download(repo_id: str, local_dir: Path):
+        called["repo_id"] = repo_id
+        Path(local_dir).mkdir(parents=True, exist_ok=True)
+        (Path(local_dir) / "config.json").write_text("{}")
+
+    monkeypatch.setattr(mod, "_download_hf_snapshot", fake_download)
+    path = mod._ensure_clip_snapshot()
+    assert called["repo_id"] == mod.CLIP_HF_REPO
+    assert path == tmp_path / "freeuv" / "image_encoder_l"
+
+
+def test_ensure_clip_raises_when_download_incomplete(tmp_path, monkeypatch):
+    import folder_paths
+    import nodes.freeuv_load as mod
+
+    monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path))
+    monkeypatch.setattr(mod, "_download_hf_snapshot", lambda repo_id, local_dir: None)
+    with pytest.raises(RuntimeError, match="config.json"):
+        mod._ensure_clip_snapshot()
+
+
+def test_ensure_freeuv_weight_missing_triggers_gdrive_download(tmp_path, monkeypatch):
+    import folder_paths
+    import nodes.freeuv_load as mod
+
+    monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path))
+    called = {}
+
+    def fake_download(url: str, out_dir: Path):
+        called["url"] = url
+        called["out_dir"] = Path(out_dir)
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        (Path(out_dir) / "uv_structure_aligner.bin").write_bytes(b"stub")
+        (Path(out_dir) / "flaw_tolerant_facial_detail_extractor.bin").write_bytes(b"stub")
+
+    monkeypatch.setattr(mod, "_download_gdrive_folder", fake_download)
+    path = mod._ensure_freeuv_weight("uv_structure_aligner.bin")
+    assert called["url"] == mod.FREEUV_GDRIVE_FOLDER
+    assert called["out_dir"] == tmp_path / "freeuv"
+    assert path == tmp_path / "freeuv" / "uv_structure_aligner.bin"
+
+
+def test_ensure_freeuv_weight_raises_when_download_incomplete(tmp_path, monkeypatch):
+    import folder_paths
+    import nodes.freeuv_load as mod
+
+    monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path))
+    monkeypatch.setattr(mod, "_download_gdrive_folder", lambda url, out_dir: None)
+    with pytest.raises(RuntimeError, match="uv_structure_aligner.bin"):
+        mod._ensure_freeuv_weight("uv_structure_aligner.bin")
+
+
+def test_gdrive_download_missing_gdown_raises_actionable_error(tmp_path, monkeypatch):
+    """If gdown isn't installed, surface an install hint rather than an opaque ImportError."""
+    import sys
+
+    import nodes.freeuv_load as mod
+
+    monkeypatch.setitem(sys.modules, "gdown", None)  # force ImportError
+    with pytest.raises(RuntimeError, match="pip install"):
+        mod._download_gdrive_folder(mod.FREEUV_GDRIVE_FOLDER, tmp_path)
+
+
+def test_execute_returns_descriptor_when_all_weights_present(tmp_path, monkeypatch):
+    import folder_paths
+    import nodes.freeuv_load as mod
+
+    monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path))
+    paths = _populate_freeuv_weights(tmp_path)
+    monkeypatch.setattr(mod, "resolve_freeuv_root", lambda required=False: None)
+
+    out = mod.LoadFreeUV.execute(device="cpu", dtype="fp32", i_understand_non_commercial=True)
+    descriptor = out[0]
+    assert descriptor["sd15_root"] == str(paths["sd15"])
+    assert descriptor["clip_root"] == str(paths["clip"])
+    assert descriptor["aligner_path"] == str(paths["aligner"])
+    assert descriptor["detail_path"] == str(paths["detail"])
+    assert descriptor["device"] == "cpu"
+    assert descriptor["dtype"] == "fp32"
+    assert descriptor["freeuv_root"] is None
+
+
+def test_execute_forces_fp32_on_cpu(tmp_path, monkeypatch):
+    import folder_paths
+    import nodes.freeuv_load as mod
+
+    monkeypatch.setattr(folder_paths, "models_dir", str(tmp_path))
+    _populate_freeuv_weights(tmp_path)
+    monkeypatch.setattr(mod, "resolve_freeuv_root", lambda required=False: None)
+
+    out = mod.LoadFreeUV.execute(device="cpu", dtype="fp16", i_understand_non_commercial=True)
+    assert out[0]["dtype"] == "fp32"

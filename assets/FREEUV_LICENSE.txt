@@ -1,0 +1,25 @@
+FreeUV (YangXingchao/FreeUV) is released under the Creative Commons
+Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0).
+
+Upstream: https://github.com/YangXingchao/FreeUV
+License text: https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode
+
+Key terms (summary — full text controls):
+
+  Attribution     — You must give appropriate credit to the FreeUV authors,
+                    provide a link to the license, and indicate if changes
+                    were made.
+  NonCommercial   — You may not use the material for commercial purposes.
+  ShareAlike      — If you remix, transform, or build upon the material, you
+                    must distribute your contributions under the same license
+                    as the original (CC BY-NC-SA 4.0).
+
+ShareAlike is viral: any UV albedo generated with FreeUV, and any derivative
+work (downstream asset, render, dataset, model) that incorporates a FreeUV
+output, inherits CC BY-NC-SA 4.0 obligations — including that any
+redistribution must also be under CC BY-NC-SA 4.0.
+
+This is in addition to the non-commercial constraints inherited from the
+KaoLRM weights (CC BY-NC 4.0) and FLAME 2020 topology (MPI non-commercial
+research license). The combined effective license for any artifact produced
+by the full WYSIWYG pipeline is the strictest union of all three.

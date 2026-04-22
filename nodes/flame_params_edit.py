@@ -3,7 +3,7 @@
 Replaces the previous `KaoLRMParamsToFLAMEParams` + `FLAMEParamsMerge` pair. This
 node takes one required `FLAME_PARAMS` input (normally the KaoLRM output) and an
 optional second input (normally SMIRK). When the second input is present, the
-fixed merge policy from `.claude/plan/final-plan.md` §6 is applied first:
+fixed merge policy from `.claude/plan/smirk-final-plan.md` §6 is applied first:
 
     shape       ← params          identity anchor (KaoLRM side)
     expression  ← params_override  if provided, else params

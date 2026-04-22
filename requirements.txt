@@ -2,9 +2,12 @@
 # safetensors, transformers, accelerate, huggingface_hub. Listed here are
 # extras this node suite needs on top of that baseline.
 #
-# KaoLRM and SMIRK source are not pinned here; vendor via third_party/{kaolrm,smirk}/
-# or set KAOLRM_ROOT / SMIRK_ROOT env vars (see nodes/*_runtime.py).
+# KaoLRM, SMIRK, and FreeUV source are not pinned here; vendor via
+# third_party/{kaolrm,smirk,freeuv}/ or set KAOLRM_ROOT / SMIRK_ROOT / FREEUV_ROOT
+# env vars (see nodes/*_runtime.py).
 chumpy>=0.70
+diffusers>=0.27.0
 einops>=0.8.0
+gdown>=5.0
 rembg>=2.0.59
 timm>=0.9.16

@@ -1,6 +1,6 @@
 # Pipeline Roadmap — WYSIWYG Studio Face Pipeline
 
-Target state for the full production pipeline. Current code implements the KaoLRM + SMIRK geometry portion of Layer 0 — identity from KaoLRM, expression + jaw-pose refinement from SMIRK, merged **inside `FLAMEParamsEdit`** alongside user-facing sliders (strengths + pose/translation offsets + `fix_z_trans` override), then re-solved through `nodes/flame_core.FlameCore`. The slider stage of the FLAME Param Optimizer has landed; landmark-fit and photometric losses remain deferred to M1/M2. See `.claude/CLAUDE.md` for the authoritative current-state spec and `.claude/plan/final-plan.md` for the approved SMIRK-integration spec.
+Target state for the full production pipeline. Current code implements the KaoLRM + SMIRK geometry portion of Layer 0 — identity from KaoLRM, expression + jaw-pose refinement from SMIRK, merged **inside `FLAMEParamsEdit`** alongside user-facing sliders (strengths + pose/translation offsets + `fix_z_trans` override), then re-solved through `nodes/flame_core.FlameCore`. The slider stage of the FLAME Param Optimizer has landed; landmark-fit and photometric losses remain deferred to M1/M2. See `.claude/CLAUDE.md` for the authoritative current-state spec, `.claude/plan/smirk-final-plan.md` for the approved SMIRK-integration spec, and `.claude/plan/final-plan.md` for the approved FreeUV (Layer 1) spec.
 
 ## Overview
 
@@ -72,7 +72,7 @@ Input image
 
 - Primary albedo source. Stable Diffusion v1.5 + Cross-Assembly inference.
 - FLAME-native UV output, no remap needed.
-- Native 1K; upscale to 2K via ESRGAN-skin or similar only at export.
+- Native 512×512; upscale to 1K/2K via ESRGAN-skin or similar only at export.
 - Fallback: FFHQ-UV lookup + HiFi3D++ → FLAME remap when FreeUV fails on extreme poses.
 
 ### Layer 2 — Intrinsic maps (MoSAR)

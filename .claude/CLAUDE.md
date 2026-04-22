@@ -2,9 +2,9 @@
 
 Project guidance for Claude Code working on the WYSIWYG Studio ComfyUI face reconstruction pipeline.
 
-**Current state.** A KaoLRM-based node suite that produces a FLAME-topology mesh from a single image, plus a SMIRK expression-refinement branch that merges SMIRK's per-frame expression + jaw pose into KaoLRM's identity params and re-solves the mesh via the canonical FLAME head. A single `FLAMEParamsEdit` node folds the merge policy together with user-facing sliders (strengths + pose/translation offsets + `fix_z_trans` override) — the seed for the FLAME Param Optimizer roadmap entry. Mesh only — no texture, no relighting maps yet. Scaffolded in `nodes/kaolrm_*.py`, `nodes/smirk_*.py`, and `nodes/flame_params_*.py`; registered via the V3 `ComfyExtension` pattern in `__init__.py`.
+**Current state.** A KaoLRM-based node suite that produces a FLAME-topology mesh from a single image, plus a SMIRK expression-refinement branch that merges SMIRK's per-frame expression + jaw pose into KaoLRM's identity params and re-solves the mesh via the canonical FLAME head. A single `FLAMEParamsEdit` node folds the merge policy together with user-facing sliders (strengths + pose/translation offsets + `fix_z_trans` override) — the seed for the FLAME Param Optimizer roadmap entry. FreeUV albedo suite (`LoadFreeUV` + `FreeUVGenerate`) is scaffolded but not yet smoke-tested end-to-end — requires manual weights + vendor checkout. Mesh only on the KaoLRM/SMIRK path; no texture wired into `MeshPreview` yet, no relighting maps. Scaffolded in `nodes/kaolrm_*.py`, `nodes/smirk_*.py`, `nodes/flame_params_*.py`, and `nodes/freeuv_*.py`; registered via the V3 `ComfyExtension` pattern in `__init__.py`.
 
-**Target state.** A 5-layer WYSIWYG Studio pipeline — KaoLRM geometry → FreeUV albedo → MoSAR intrinsic maps → DECA expression detail → pore composite → export — producing fully-textured, relightable FLAME assets. Full roadmap in [`docs/pipeline-roadmap.md`](docs/pipeline-roadmap.md). Approved integration spec for the SMIRK branch lives at [`plan/final-plan.md`](plan/final-plan.md).
+**Target state.** A 5-layer WYSIWYG Studio pipeline — KaoLRM geometry → FreeUV albedo → MoSAR intrinsic maps → DECA expression detail → pore composite → export — producing fully-textured, relightable FLAME assets. Full roadmap in [`docs/pipeline-roadmap.md`](docs/pipeline-roadmap.md). Approved integration spec for the SMIRK branch: [`plan/smirk-final-plan.md`](plan/smirk-final-plan.md). Approved spec for the next layer (FreeUV albedo): [`plan/final-plan.md`](plan/final-plan.md).
 
 **Rule of thumb.** Work forward from the KaoLRM mesh path. The old FLAME editor/viewer nodes are not the active product path, but `nodes/flame_core.py` and `nodes/flame_render_util.py` are still active dependencies of the KaoLRM scaffold and must not be treated as dead code.
 
@@ -87,6 +87,13 @@ LoadSMIRK ─► SMIRKPredict ─► FLAME_PARAMS ──────────
 - `nodes/flame_params_edit.py` — `FLAMEParamsEdit` node + `_apply_merge_policy()` + `_apply_edits()` helpers + `FIX_Z_OPTIONS` constant.
 - `nodes/flame_params_to_mesh.py` — `FLAMEParamsToMesh` node, `_expand_pose_6_to_15()` helper, `N_VERTICES` constant (monkey-patched by tests).
 
+### Active (FreeUV albedo branch)
+
+- `nodes/freeuv_runtime.py` — `FREEUV_ENV_VAR = "FREEUV_ROOT"`, `third_party/freeuv/` discovery (via `detail_encoder/__init__.py`), `ensure_freeuv_on_path()` uses **`sys.path` injection** instead of `spec_from_file_location` because FreeUV's `detail_encoder/` uses relative imports.
+- `nodes/freeuv_assets.py` — `REFERENCE_UV_PATH`, `load_reference_uv()`, `_REFERENCE_UV_CACHE` (bundled 512×512 neutral reference used as the default `reference_uv` when one is not wired into `FreeUVGenerate`).
+- `nodes/freeuv_load.py` — `LoadFreeUV`, `FREEUV_MODEL` wire, `_ensure_sd15_snapshot`, `_ensure_clip_snapshot`, `_ensure_freeuv_weight`, `ensure_freeuv_weights`. Weight layout under `ComfyUI/models/freeuv/{sd15/, image_encoder_l/, uv_structure_aligner.bin, flaw_tolerant_facial_detail_extractor.bin}`.
+- `nodes/freeuv_generate.py` — `FreeUVGenerate`, `_FREEUV_CACHE` keyed by `(device, dtype, sd15_root, clip_root, aligner_path, detail_path, freeuv_root)`, `_load_freeuv_pipeline` (imports `detail_encoder`, diffusers `ControlNetModel` + `DDIMScheduler`, vendor `pipeline_sd15.StableDiffusionControlNetPipeline/UNet2DConditionModel`). Upstream entry: `detail_extractor.generate(uv_structure_image=..., flaw_uv_image=..., pipe=..., seed=..., guidance_scale=1.4, num_inference_steps=30)`; enforces batch size 1 and samples a random seed when `seed == -1`.
+
 ### Active shared helpers
 
 - `nodes/flame_render_util.py` — `render_mesh()`, `render_points()`, `hex_to_rgb()`. Used by `MeshPreview`.
@@ -130,10 +137,14 @@ LoadSMIRK ─► SMIRKPredict ─► FLAME_PARAMS ──────────
 - `ComfyUI/models/kaolrm/multiview.config.json`
 - `ComfyUI/models/flame/generic_model.pkl`
 - `ComfyUI/models/smirk/SMIRK_em1.pt`
+- `ComfyUI/models/freeuv/sd15/` (SD1.5 snapshot — `stable-diffusion-v1-5/stable-diffusion-v1-5`)
+- `ComfyUI/models/freeuv/image_encoder_l/` (CLIP-ViT-L/14 snapshot — `openai/clip-vit-large-patch14`)
+- `ComfyUI/models/freeuv/uv_structure_aligner.bin`
+- `ComfyUI/models/freeuv/flaw_tolerant_facial_detail_extractor.bin`
 
 ### Required framework deps (`requirements.txt`)
 
-`huggingface_hub`, `safetensors`, `einops`, `rembg`, `chumpy`, `timm>=0.9.16` (for SMIRK's `MobileNetV3`-based encoder). Keep `pytorch3d`, `xformers`, `diff-surfel-rasterization` **out** of required deps — they're only needed for the Gaussian splat video path we don't use.
+`huggingface_hub`, `safetensors`, `einops`, `rembg`, `chumpy`, `timm>=0.9.16` (for SMIRK's `MobileNetV3`-based encoder), `diffusers>=0.27.0` (for the FreeUV pipeline). `transformers` + `accelerate` are bundled by ComfyUI. Keep `pytorch3d`, `xformers`, `diff-surfel-rasterization` **out** of required deps — they're only needed for the Gaussian splat video path we don't use.
 
 ### Dependency integration strategy for KaoLRM itself
 
@@ -155,10 +166,21 @@ Same three-option pattern as KaoLRM. `nodes/smirk_runtime.py` resolves the sourc
 
 `SmirkEncoder` is imported in isolation via `importlib.util.spec_from_file_location`, sidestepping upstream's package-level `__init__.py`. Upstream repo: `https://github.com/georgeretsi/smirk`. Commit pin: **BLOCKER — to be resolved before merge.**
 
+### Dependency integration strategy for FreeUV
+
+Same three-option pattern as KaoLRM/SMIRK. `nodes/freeuv_runtime.py` resolves the source tree in this order:
+
+- **Option A (preferred)** — vendor a pinned checkout under `third_party/freeuv/` (detected by the presence of `detail_encoder/__init__.py`).
+- **Option B** — install upstream `freeuv` into the active Python environment.
+- **Option C** — set `FREEUV_ROOT=/abs/path/to/FreeUV` for local development.
+
+Deliberate divergence: unlike KaoLRM/SMIRK, FreeUV is loaded via **`sys.path` injection** (`ensure_freeuv_on_path`), not `importlib.util.spec_from_file_location`. FreeUV's `detail_encoder/` package uses relative imports (`._clip`, `.attention_processor`, `.resampler`), which only resolve when the vendor root is on `sys.path`. Upstream repo: `https://github.com/YangXingchao/FreeUV`. Commit pin: **BLOCKER — to be resolved before merge.**
+
 ### Testing
 
 - Per-node unit tests: fixed input → expected output shape/range. KaoLRM suite: `test_kaolrm_load.py`, `test_kaolrm_preprocess.py`, `test_kaolrm_reconstruct.py` (mocked model; asserts the FLAME_PARAMS second output + fix_z_trans variant gating), `test_kaolrm_runtime.py`, `test_mesh_type.py`. SMIRK + params suite: `test_smirk_runtime.py`, `test_smirk_load.py`, `test_smirk_predict.py` (monkey-patches `_load_smirk_encoder`), `test_flame_params_edit.py` (passthrough, merge policy, strength sliders, offsets, `fix_z_trans_override`, validation errors), `test_flame_params_to_mesh.py` (uses `synthetic_flame_pkl` fixture from `conftest.py` to build a zeroed FLAME pkl with a configurable vertex count — set via `monkeypatch.setattr("nodes.flame_params_to_mesh.N_VERTICES", N)`). Legacy FLAME helper tests: `test_flame_core.py`, `test_flame_params.py`, `test_render.py`, `test_routes.py`.
-- Run with `~/github/ComfyUI/venv311/bin/python -m pytest tests/` — all 55 should pass with no real weights present.
+- FreeUV suite: `test_freeuv_runtime.py` (env var + vendor detection + `sys.path` injection), `test_freeuv_load.py` (NC gate, missing-weight error messages, descriptor shape, CPU-forces-fp32), `test_freeuv_assets.py` (bundled reference UV loader + cache), `test_freeuv_generate.py` (fallback + explicit reference UV, batch>1 rejection, seed=-1 sampling, cache-key ordering; pipeline itself is monkey-patched).
+- Run with `~/github/ComfyUI/venv311/bin/python -m pytest tests/` — all 74 should pass with no real weights present.
 - End-to-end tests require the real weights — mark `@pytest.mark.slow`, run locally before release, never required in CI.
 
 ---
@@ -185,7 +207,7 @@ Same three-option pattern as KaoLRM. `nodes/smirk_runtime.py` resolves the sourc
 ### Landed
 
 - `LoadKaoLRM`, `KaoLRMPreprocess`, `KaoLRMReconstruct`, `MeshPreview` implemented and registered via `nodes/__init__.py` + V3 `ComfyExtension` in `__init__.py`.
-- `LoadSMIRK`, `SMIRKPredict`, `FLAMEParamsEdit`, `FLAMEParamsToMesh` scaffolded per [`plan/final-plan.md`](plan/final-plan.md) and registered. The earlier `KaoLRMParamsToFLAMEParams` shim and the stand-alone `FLAMEParamsMerge` node have been folded into `KaoLRMReconstruct`'s second output + `FLAMEParamsEdit`.
+- `LoadSMIRK`, `SMIRKPredict`, `FLAMEParamsEdit`, `FLAMEParamsToMesh` scaffolded per [`plan/smirk-final-plan.md`](plan/smirk-final-plan.md) and registered. The earlier `KaoLRMParamsToFLAMEParams` shim and the stand-alone `FLAMEParamsMerge` node have been folded into `KaoLRMReconstruct`'s second output + `FLAMEParamsEdit`.
 - `FLAME_PARAMS` wire type (`nodes/flame_params_wire.py`) with canonical `[B, N]` schema + `validate_flame_params` gatekeeper.
 - `i_understand_non_commercial` gate on `LoadKaoLRM` and `LoadSMIRK` (Brutal Review #1).
 - Missing-weight / missing-FLAME / missing-SMIRK error messages name the exact path and upstream URL (Brutal Review #2).
@@ -193,16 +215,23 @@ Same three-option pattern as KaoLRM. `nodes/smirk_runtime.py` resolves the sourc
 - KaoLRM and SMIRK import surfaces isolated: `kaolrm_runtime.py` / `smirk_runtime.py` + `importlib.util.spec_from_file_location` — sidesteps upstream top-level `__init__.py` modules (Brutal Review #3 resolved).
 - `config_path` threaded through `KAOLRM_MODEL` descriptor + `_KAOLRM_CACHE` key + `load_mesh_only_model`, so the KaoLRM release configs can live alongside the safetensors (`models/kaolrm/{variant}.config.json`).
 - `KaoLRMReconstruct` emits `FLAME_PARAMS` directly as a second output (canonical `[1, N]` tensors + `fix_z_trans`); the stashed `mesh.flame_params` / `mesh.fix_z_trans` attrs remain for legacy inspection.
-- Tests landed: 55 green across the KaoLRM, SMIRK, and edit suites (see Testing section for inventory).
+- `LoadFreeUV`, `FreeUVGenerate` scaffolded per [`plan/final-plan.md`](plan/final-plan.md) and registered. `nodes/freeuv_runtime.py` (`sys.path` injection, `FREEUV_ROOT` env var), `nodes/freeuv_assets.py` (bundled neutral reference UV loader with in-memory cache), `nodes/freeuv_load.py` (descriptor + weight-path resolution + NC/SA gate), `nodes/freeuv_generate.py` (`_FREEUV_CACHE` keyed by 7-tuple, upstream `detail_extractor.generate(...)` call). `FREEUV_MODEL` wire type (`io.Custom("FREEUV_MODEL")`).
+- `i_understand_non_commercial` gate on `LoadFreeUV` surfaces CC BY-NC-SA 4.0 *ShareAlike* obligations in the tooltip (new viral clause on top of the KaoLRM/FLAME non-commercial constraints).
+- `assets/FREEUV_LICENSE.txt` + `assets/README.md` shipped alongside the existing FLAME / SMIRK license texts.
+- `diffusers>=0.27.0` added to `requirements.txt` for the FreeUV pipeline.
+- `docs/pipeline-roadmap.md` layer 1 corrected from "Native 1K" to "Native 512×512" to match FreeUV's actual output resolution.
+- Tests landed: 74 green across the KaoLRM, SMIRK, edit, and FreeUV suites (see Testing section for inventory).
 
 ### Open
 
 - **BLOCKERS for first SMIRK release.** Pin the upstream `smirk` commit hash; confirm the SHA256 of `SMIRK_em1.pt` and record it in `docs/model_hashes.md`.
-- Vendor `third_party/kaolrm/` and `third_party/smirk/` as pinned submodules for the default portable install. Runtime can still come from an installed package or `KAOLRM_ROOT` / `SMIRK_ROOT`, but vendoring is the most reproducible default.
-- Ship `assets/KAOLRM_LICENSE.txt`, `assets/EG3D_LICENSE.txt`, and `assets/SMIRK_MIT_LICENSE.txt` alongside the existing `assets/FLAME_LICENSE.txt`.
-- Bundle `workflows/kaolrm_smirk_mesh.json` — SMIRK-refined demo workflow — alongside the existing mesh-preview example.
-- Comment block in `requirements.txt` documenting the manual KaoLRM + SMIRK install (submodule vs `pip install git+...@<sha>`).
+- **BLOCKERS for first FreeUV release.** Pin the upstream `YangXingchao/FreeUV` commit hash; confirm the SHA256 of `uv_structure_aligner.bin` + `flaw_tolerant_facial_detail_extractor.bin` and record in `docs/model_hashes.md`. Ship `assets/freeuv_reference_uv.jpg` (the 512×512 neutral reference used as the default `reference_uv` input).
+- Vendor `third_party/kaolrm/`, `third_party/smirk/`, and `third_party/freeuv/` as pinned submodules for the default portable install. Runtime can still come from an installed package or `KAOLRM_ROOT` / `SMIRK_ROOT` / `FREEUV_ROOT`, but vendoring is the most reproducible default.
+- Ship `assets/KAOLRM_LICENSE.txt` and `assets/EG3D_LICENSE.txt` alongside the existing `FLAME_LICENSE.txt`, `SMIRK_MIT_LICENSE.txt`, and `FREEUV_LICENSE.txt`.
+- Bundle `workflows/kaolrm_smirk_mesh.json` — SMIRK-refined demo workflow — alongside the existing mesh-preview example. FreeUV demo workflow to follow once the `FLAMEProjectToUV` (mesh → flaw UV) node lands in v0.2.
+- Comment block in `requirements.txt` documenting the manual KaoLRM + SMIRK + FreeUV install (submodule vs `pip install git+...@<sha>`).
 - `tests/test_mesh_preview.py` — render-smoke against a synthetic 5023-vert mesh. `test_mesh_type.py` covers the helpers but not the node.
+- FreeUV end-to-end smoke: requires real weights, the vendor checkout, and a manually produced flaw UV (no `FLAMEProjectToUV` node in v0.1). Mark `@pytest.mark.slow` and run locally before release.
 
 ---
 
@@ -227,6 +256,9 @@ Kept inline because these are active risks for every PR, not resolved history.
 15. **FLAME head re-solve layering.** `FLAMEParamsToMesh` deliberately uses `nodes/flame_core.py:FlameCore` instead of the KaoLRM-vendored `flame.py` so the custom node suite doesn't hard-depend on the `third_party/kaolrm/` tree for the params→mesh path. Keep it that way: the KaoLRM path stays vendored, the edited path uses our own FLAME loader.
 16. **Scale/translation application order.** `FLAMEParamsToMesh` applies scale and translation *outside* `FlameCore.forward` so `fix_z_trans=True` can zero translation z reliably regardless of what the FLAME core does with `zero_trans`. `KaoLRMReconstruct` goes through `model.flame2mesh(...)` which has its own code path — the two must stay numerically equivalent on a KaoLRM-only workflow. Covered by `test_flame_params_to_mesh.py::test_fix_z_trans_true_zeros_translation_z`; re-verify when `FlameCore` changes.
 17. **Strength sliders are multiplicative, offsets are additive.** `FLAMEParamsEdit` clones `pose` before scaling jaw so the global slot stays untouched, then adds the global offsets. Translation offset applies pre-`fix_z_trans`, so `force_true` still zeros z downstream. If sliders ever gain a relative-to-neutral-face mode, spec it explicitly; don't redefine existing parameter semantics silently.
+18. **FreeUV ShareAlike is viral.** CC BY-NC-SA 4.0 goes beyond the KaoLRM/FLAME non-commercial clause: every downstream artifact (UV albedo, final render, dataset, trained model) that incorporates a FreeUV output must be distributed under the same license on redistribution. The `i_understand_non_commercial` gate tooltip and `assets/README.md` call this out, but any UI banner for the full pipeline must keep ShareAlike visible — not fold it into a generic "non-commercial" notice.
+19. **FreeUV is SD1.5 + ControlNet + detail_encoder — ~5 GB of weights.** The first-run download is larger than KaoLRM's and hits two separate HF repos (SD1.5 base + CLIP-L/14) plus two raw `.bin` files from the FreeUV release page. Missing-weight errors must name each path and URL separately — do not collapse them behind a single "FreeUV weights missing" message.
+20. **`sys.path` injection for FreeUV, not `spec_from_file_location`.** FreeUV's `detail_encoder/` uses relative imports that only resolve when the vendor root is on `sys.path`. Loading submodules in isolation (as SMIRK/KaoLRM do) breaks the relative-import graph. Keep the divergence; if upstream FreeUV ever refactors to absolute imports, revisit.
 
 ---
 
@@ -242,9 +274,10 @@ Kept inline because these are active risks for every PR, not resolved history.
 8. **No regression on legacy helpers.** Registration still succeeds; existing `tests/test_flame_*` pass.
 9. **SMIRK branch smoke.** With `SMIRK_em1.pt` at `models/smirk/` and the SMIRK source resolved, `LoadSMIRK.execute(i_understand_non_commercial=True)` returns a descriptor; `SMIRKPredict` on a front portrait returns `FLAME_PARAMS` with `pose[:, :3]` all zeros and `pose[:, 3:]` non-zero (jaw). `FLAMEParamsEdit(params=kaolrm, params_override=smirk)` → `FLAMEParamsToMesh` produces `vertices.shape == (1, 5023, 3)` with identity inherited from KaoLRM and mouth shape inherited from SMIRK. Sliders: `expression_strength=0.0` collapses to neutral mouth; `jaw_strength=0.0` closes the jaw while preserving expression; `scale_multiplier=0.5` shrinks the mesh uniformly.
 10. **Pose-expansion sanity.** `_expand_pose_6_to_15` on `[0.1…0.6]` input produces `[0.1, 0.2, 0.3, 0, 0, 0, 0.4, 0.5, 0.6, 0, 0, 0, 0, 0, 0]`. Asserted in `test_flame_params_to_mesh.py`.
+11. **FreeUV branch smoke.** With weights at `models/freeuv/{sd15,image_encoder_l,uv_structure_aligner.bin,flaw_tolerant_facial_detail_extractor.bin}` and the FreeUV checkout vendored or `FREEUV_ROOT` set, `LoadFreeUV.execute(i_understand_non_commercial=True)` returns a descriptor. `FreeUVGenerate.execute(descriptor, flaw_uv=uv_image_512)` returns a `[1, 512, 512, 3]` float32 IMAGE in [0,1]; the default reference UV (`assets/freeuv_reference_uv.jpg`) is loaded when `reference_uv` is not wired. Wiring an explicit `reference_uv` bypasses the bundled asset load. `seed=-1` samples a fresh seed per call; a fixed seed is deterministic.
 
 ---
 
 ## References
 
-Primary: KaoLRM (3DV 2026), FLAME 2020 (MPI), SMIRK (CVPR 2024, `georgeretsi/smirk`). Roadmap papers (SMIRK, FreeUV, MoSAR, DECA, FFHQ-UV, Barré-Brisebois & Hill) and roles are in [`docs/pipeline-roadmap.md`](docs/pipeline-roadmap.md). Approved SMIRK-integration spec: [`plan/final-plan.md`](plan/final-plan.md). FLAME-Universe (github.com/TimoBolkart/FLAME-Universe) is the canonical index.
+Primary: KaoLRM (3DV 2026), FLAME 2020 (MPI), SMIRK (CVPR 2024, `georgeretsi/smirk`). Roadmap papers (SMIRK, FreeUV, MoSAR, DECA, FFHQ-UV, Barré-Brisebois & Hill) and roles are in [`docs/pipeline-roadmap.md`](docs/pipeline-roadmap.md). Approved SMIRK-integration spec: [`plan/smirk-final-plan.md`](plan/smirk-final-plan.md). Approved FreeUV spec: [`plan/final-plan.md`](plan/final-plan.md). FLAME-Universe (github.com/TimoBolkart/FLAME-Universe) is the canonical index.

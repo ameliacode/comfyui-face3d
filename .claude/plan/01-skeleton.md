@@ -1,48 +1,47 @@
-# SMIRK Node Suite — Layer 0 Expression Refinement on KaoLRM
+# FreeUV Node Suite — Layer 1 Albedo UV Generation (v0.1)
 
 ## Scope
-- SMIRK predictor node: IMAGE → FLAME params (expression, jaw_pose; also shape, pose, eye_pose if upstream returns them).
-- Param-merge node: combine KaoLRM shape/identity with SMIRK expression/jaw_pose into a single `FLAME_PARAMS` dict.
-- Mesh re-solve strategy after merge (new node vs. reuse of `KaoLRMReconstruct`'s FLAME forward path).
-- Runtime/source resolution (env var, vendored `third_party/smirk`, installed package) mirroring `nodes/kaolrm_runtime.py`.
-- Weight/config discovery under `models/smirk/` with explicit missing-file errors; non-commercial gate surfacing.
-- Unit tests with synthetic dummies; V3 `ComfyExtension` registration; cache-key design.
-- **NOT covered**: face crop/alignment preprocessing details (assumed separate node or reused from KaoLRM), texture/UV work, DECA detail, multi-view SMIRK variants, training/fine-tuning.
+- Thin ComfyUI wrapper over FreeUV's `inference.py` stack (SD1.5 UNet + ControlNet UV structure aligner + detail encoder + DDIM scheduler).
+- New node suite matching the SMIRK pattern: runtime resolver, `LoadFreeUV` descriptor node, and a single inference node that consumes two pre-supplied 512×512 UV IMAGEs and emits a 512×512 albedo UV IMAGE.
+- Weight/config discovery for SD1.5 base, CLIP-ViT-L/14 image encoder, and the two FreeUV `.bin` checkpoints.
+- License integration: surface FreeUV's CC BY-NC-SA 4.0 ShareAlike escalation on top of the existing non-commercial stack.
+- Registration via the V3 `ComfyExtension` in `__init__.py`; category stays `KaoLRM` for v0.1 parity.
+
+**Out of scope (v0.2+):** `FLAMEProjectToUV` (render KaoLRM mesh + photo → flaw UV) is deferred; v0.1 takes both UV inputs as IMAGEs. No data-process or training code. No MoSAR/DECA integration. No batch-size >1.
 
 ## Assumptions
-- SMIRK upstream exposes a predictor producing per-frame FLAME parameter tensors compatible with FLAME 2020 shape/expression/pose dims used by KaoLRM (100/50/6). *Unverified — see Q1.*
-- SMIRK's face crop expectation differs from KaoLRM's 224² canonical crop and needs an explicit preprocess step. *Likely — see Q2.*
-- `KaoLRMReconstruct` already emits the FLAME pkl + params in a form re-usable for a second forward pass; the FLAME forward can be factored out without pulling in the triplane encoder.
-- SMIRK weights are research/non-commercial — same `i_understand_non_commercial` gate pattern applies.
-- Merge policy is fixed by the roadmap: `shape ← KaoLRM`, `expression, jaw_pose ← SMIRK`; `pose (neck/global)`, `scale`, `translation` remain from KaoLRM unless overridden.
+- Upstream FreeUV (`YangXingchao/FreeUV`) inference API is stable at the commit we pin; `detail_encoder.generate(...)` signature and `.bin` key names match `main` at time of spec authoring.
+- `detail_encoder/` must be importable as a Python package (uses relative imports `._clip`, `.attention_processor`, `.resampler`). Runtime resolver will need `sys.path` injection, not SMIRK-style isolated `spec_from_file_location`.
+- Output is **512×512** (roadmap says "native 1K" — this is a known roadmap correction).
+- SD1.5 weights live under `ComfyUI/models/freeuv/sd15/` by default; sharing with existing ComfyUI SD1.5 checkpoints is a planning decision (see Q1).
+- `torch_dtype=torch.float32` matches upstream default; fp16 safety is unverified for ControlNet + detail_encoder path.
 
 ## Sections
-1. Node Boundaries and Wire Types — SMIRK_MODEL descriptor, FLAME_PARAMS wire type, MESH re-emission rules.
-2. Runtime Resolution — `nodes/smirk_runtime.py` mirroring `kaolrm_runtime.py` (env `SMIRK_ROOT`, `third_party/smirk`, installed package, isolated import surface).
-3. Weight and Config Discovery — `models/smirk/` layout, filename constants, missing-file error contract.
-4. LoadSMIRK Node — descriptor shape, non-commercial gate, device/dtype resolution, lazy build deferred to predictor.
-5. SMIRKPredict Node — preprocess contract, module-scope cache, `_SMIRK_CACHE` key, forward call, param tensor normalization to FLAME_PARAMS.
-6. FLAMEParamsMerge Node — merge policy, field-by-field override table, dim-compatibility checks, pass-through of `scale`/`translation`.
-7. Mesh Re-solve Strategy — decision between (a) a new `FLAMEParamsToMesh` node that loads only the FLAME pkl, or (b) extending `KaoLRMReconstruct` to accept optional override params. Covers chumpy shim reuse and FLAME model caching.
-8. Registration and Category — V3 `ComfyExtension` entry additions, category naming (`KaoLRM` vs. new `WYSIWYG/Face/SMIRK`).
-9. Testing Strategy — synthetic dummy predictor, merge correctness tests, runtime resolution tests, missing-weight error tests, mesh re-solve round-trip.
-10. Non-commercial and Licensing — gate propagation, `assets/SMIRK_LICENSE.txt`, tooltip red-text, roadmap M1 alignment.
+1. Node boundaries & wire types — enumerate `LoadFreeUV` + `FreeUVInfer` (name TBD); reuse `io.Image` for both UV inputs and output; introduce `FREEUV_MODEL` custom descriptor only.
+2. Runtime resolution (`nodes/freeuv_runtime.py`) — env var / vendored `third_party/freeuv/` / installed-package fallback; document the package-loading divergence from SMIRK.
+3. Weight & config discovery (`LoadFreeUV`) — paths for SD1.5, CLIP-ViT-L/14, `uv_structure_aligner.bin`, `flaw_tolerant_facial_detail_extractor.bin`; address shared-vs-self-contained SD1.5.
+4. `LoadFreeUV` node schema — inputs (device, dtype, non-commercial gate with ShareAlike wording), output `FREEUV_MODEL` descriptor, lazy build contract.
+5. `FreeUVInfer` node schema + cache — inputs (`uv_structure_image`, `flaw_uv_image`, `seed`, `guidance_scale`, `num_inference_steps`), `_FREEUV_CACHE` key, forward flow mirroring `inference.py`, PIL↔IMAGE conversion.
+6. File layout & registration — new `nodes/freeuv_*.py` files, `nodes/__init__.py` additions, `__init__.py` extension diff, category decision.
+7. Testing strategy — mirror `tests/test_smirk_*.py`; mock pipeline + detail_encoder; descriptor and schema smoke tests; no real weights required.
+8. Non-commercial + ShareAlike gate & licensing — tooltip wording, `assets/FREEUV_LICENSE.txt`, pipeline-wide ShareAlike implications for exports.
+9. Known corrections — roadmap's "native 1K" is actually 512×512; `runwayml/stable-diffusion-v1-5` → `stable-diffusion-v1-5/stable-diffusion-v1-5` after HF deprecation.
+10. Open questions — blockers for Phase 2 drafting (see below).
 
 ## Open Questions
-- Q1: Which SMIRK fork/commit is canonical (georgeretsi/smirk vs. other) and what is the exact predictor API signature — does it return a dict with keys matching KaoLRM's `{shape, expression, pose, ...}` or a different schema (e.g., separate `jaw_pose`, `eye_pose`, `neck_pose`)?
-- Q2: What input size/crop does SMIRK expect, and does it assume MediaPipe/FAN landmarks upstream? Does the user need a SMIRK-specific preprocess node, or can `KaoLRMPreprocess` output be reused?
-- Q3: Does SMIRK's shape dim match FLAME 2020's 100 used by KaoLRM, or a different count (e.g., 300)? If mismatched, how should the merge node project/truncate?
-- Q4: Does SMIRK split `pose` into separate `jaw_pose` / `neck_pose` / `global_pose`, and is the 6-dim KaoLRM `pose` axis-angle concat of global+jaw (standard FLAME) or something custom?
-- Q5: Mesh re-solve — prefer a dedicated `FLAMEParamsToMesh` node, or overload `KaoLRMReconstruct` with an optional `flame_params_override` input? Which better fits V3 Comfy conventions and caching?
-- Q6: Should `FLAME_PARAMS` be a new `io.Custom("FLAME_PARAMS")` wire, or piggy-back on the existing `MESH.flame_params` attr channel?
-- Q7: Does SMIRK pull heavy transitive deps (mediapipe, face-alignment, pytorch3d) that should be kept optional via import isolation like `kaolrm_mesh_model.py`?
-- Q8: Are SMIRK weights redistributable under its license, or must users fetch from an upstream gated release? Determines whether `models/smirk/` instructions mirror KaoLRM's manual-drop or FLAME's registration wall.
-- Q9: Batch semantics — SMIRK is per-frame; should the node enforce batch==1 like `KaoLRMReconstruct` or allow batched prediction?
+- Q1. Does `LoadFreeUV` allow pointing at an existing ComfyUI SD1.5 checkpoint (reducing ~5 GB download), or require a self-contained `models/freeuv/sd15/` directory? HF snapshot dir vs single-file `.safetensors`?
+- Q2. Bundle `data-process/resources/uv.jpg` as a default reference UV asset in `assets/`, or always require the user to supply both UV IMAGEs?
+- Q3. `detail_encoder` package loading: vendor-only (`third_party/freeuv/` with `sys.path` injection), isolated `importlib` on a submodule, or allow installed-package fallback? How do we reconcile with SMIRK/KaoLRM's `spec_from_file_location` pattern given the relative imports?
+- Q4. Expose `torch_dtype` (`fp32`/`fp16`/`bf16`) like other nodes, or hardcode fp32 per upstream? Any fp16 underflow risk on ControlNet/detail_encoder outputs analogous to Brutal Review #11?
+- Q5. CLIP-ViT-L/14 image encoder — fixed `models/freeuv/image_encoder_l/` subdir, or reuse ComfyUI's `clip_vision/` directory via `folder_paths`?
+- Q6. Enforce batch size 1 (SMIRK parity), or support `detail_encoder.generate`'s internal iteration batch loop for batch > 1?
+- Q7. License escalation: does CC BY-NC-SA 4.0 require a whole-pipeline LICENSE statement (`assets/README.md` or repo `LICENSE`), and what does it mean for exported meshes/textures that touch this node?
+- Q8. Final node name: `FreeUVInfer`, `FreeUVGenerate`, `FreeUVAlbedo`, or other? (SMIRK used `SMIRKPredict`; KaoLRM used `KaoLRMReconstruct`.)
+- Q9. Commit hash + SHA256 pins for FreeUV repo and the two `.bin` checkpoints — blocker for first release, mirrors SMIRK's open BLOCKER.
+- Q10. DDIM scheduler is swapped in after pipeline construction upstream — expose the scheduler as a user choice or lock to DDIM in v0.1?
 
 ## Success Criteria
-- `LoadSMIRK` + `SMIRKPredict` + `FLAMEParamsMerge` + a mesh re-solve node registered via V3 `ComfyExtension`; `python -c "from nodes.smirk_load import LoadSMIRK"` succeeds with no weights present.
-- Missing weight/config paths raise `RuntimeError` naming exact path and upstream URL.
-- With a dummy predictor (tests), IMAGE → FLAME_PARAMS → merged params → 5023-vert FLAME mesh round-trips with `vertices.shape == (1, 5023, 3)`.
-- Merge policy verified: merged `shape` equals KaoLRM's; merged `expression`/`jaw_pose` equal SMIRK's; other fields follow the documented override table.
-- Non-commercial gate blocks execution until acknowledged; workflow JSON example checked in showing KaoLRM → SMIRK → Merge → Mesh → MeshPreview.
-- All open questions Q1–Q9 either resolved or explicitly deferred with a named owner before the researcher drafts content.
+- `01-skeleton.md` approved → researcher can expand each section into `final-plan.md` without re-debating scope.
+- All 10 open questions have approved answers before Phase 2 drafting starts.
+- Resulting spec lets an implementer land `LoadFreeUV` + `FreeUVInfer` with tests green against mocked pipeline/detail_encoder, matching `tests/test_smirk_*.py` depth (descriptor shape, schema gate, cache key, error messages naming exact paths + URLs).
+- Non-commercial + ShareAlike gate wording is unambiguous enough that a commercial user cannot miss the escalation over the existing FLAME/KaoLRM constraints.
