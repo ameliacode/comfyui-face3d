@@ -83,3 +83,30 @@ def ensure_freeuv_on_path(*, required: bool = True) -> Path | None:
         sys.path.insert(0, root_str)
         log.info("Added FreeUV source root to sys.path: %s", root)
     return root
+
+
+def patch_huggingface_hub_compat() -> None:
+    """Back-fill attributes that `diffusers==0.27.x` expects on `huggingface_hub`
+    and `transformers` in modern environments.
+
+    `cached_download`, `hf_cache_home` were removed in huggingface_hub>=0.26.
+    `FLAX_WEIGHTS_NAME` was removed from `transformers.utils` in transformers>=5.
+    FreeUV's pinned diffusers imports them at module load — without these
+    aliases the vendor stack raises ImportError before any model is built.
+    Idempotent; safe to call from every pipeline load.
+    """
+    import os
+    import huggingface_hub
+    from huggingface_hub import constants as hc
+
+    if not hasattr(huggingface_hub, "cached_download"):
+        huggingface_hub.cached_download = huggingface_hub.hf_hub_download
+    if not hasattr(hc, "hf_cache_home"):
+        hc.hf_cache_home = os.path.dirname(hc.HF_HUB_CACHE)
+    if not hasattr(huggingface_hub, "hf_cache_home"):
+        huggingface_hub.hf_cache_home = hc.hf_cache_home
+
+    import transformers.utils as tu
+
+    if not hasattr(tu, "FLAX_WEIGHTS_NAME"):
+        tu.FLAX_WEIGHTS_NAME = "flax_model.msgpack"

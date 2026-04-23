@@ -1,5 +1,6 @@
 from .flame_params_edit import FLAMEParamsEdit
 from .flame_params_to_mesh import FLAMEParamsToMesh
+from .flame_project_to_uv import FLAMEProjectToUV
 from .freeuv_generate import FreeUVGenerate
 from .freeuv_load import LoadFreeUV
 from .kaolrm_load import LoadKaoLRM
@@ -18,6 +19,7 @@ NODE_CLASSES = [
     SMIRKPredict,
     FLAMEParamsEdit,
     FLAMEParamsToMesh,
+    FLAMEProjectToUV,
     LoadFreeUV,
     FreeUVGenerate,
 ]

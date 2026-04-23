@@ -11,7 +11,7 @@ from PIL import Image
 
 from .freeuv_assets import load_reference_uv
 from .freeuv_load import FREEUV_MODEL
-from .freeuv_runtime import ensure_freeuv_on_path
+from .freeuv_runtime import ensure_freeuv_on_path, patch_huggingface_hub_compat
 
 log = logging.getLogger(__name__)
 
@@ -37,9 +37,11 @@ def _load_freeuv_pipeline(freeuv_model: dict):
     that `_run_generate` consumes. Mirrors upstream `inference.py`.
     """
     ensure_freeuv_on_path()
+    patch_huggingface_hub_compat()
 
     # Upstream vendors pipeline_sd15.py at repo root and a detail_encoder/ package.
-    from detail_encoder import detail_encoder  # type: ignore[import-not-found]
+    # The class lives in detail_encoder.encoder_freeuv (upstream __init__.py is empty).
+    from detail_encoder.encoder_freeuv import detail_encoder  # type: ignore[import-not-found]
     from diffusers import ControlNetModel, DDIMScheduler
     from pipeline_sd15 import (  # type: ignore[import-not-found]
         StableDiffusionControlNetPipeline,
